@@ -1,6 +1,34 @@
 import mongoose from 'mongoose';
 
 const specialistSchema = new mongoose.Schema({
+  // Authentication fields (NEW)
+  email: {
+    type: String,
+    required: true,
+    unique: true,
+    trim: true,
+    lowercase: true
+  },
+  password: {
+    type: String,
+    required: true
+  },
+  accountStatus: {
+    type: String,
+    enum: ['pending', 'approved', 'blocked'],
+    default: 'pending'
+  },
+  verificationStatus: {
+    type: String,
+    enum: ['unverified', 'verified', 'rejected'],
+    default: 'unverified'
+  },
+  verificationDocuments: [{
+    documentType: String,
+    documentUrl: String,
+    uploadedAt: Date
+  }],
+  // The Others
   name: {
     type: String,
     required: true,
@@ -24,11 +52,6 @@ const specialistSchema = new mongoose.Schema({
     type: String,
     required: true,
     trim: true
-  },
-  email: {
-    type: String,
-    trim: true,
-    lowercase: true
   },
   rating: {
     type: Number,
@@ -90,7 +113,31 @@ const specialistSchema = new mongoose.Schema({
   services: [{
     type: String,
     trim: true
-  }]
+  }],
+  // Additional professional fields
+  medicalLicenseNumber: {
+    type: String,
+    trim: true
+  },
+  licenseExpiry: {
+    type: Date
+  },
+  yearsOfExperience: {
+    type: Number,
+    min: 0
+  },
+  isAvailableForConsultation: {
+    type: Boolean,
+    default: true
+  },
+  consultationTypes: [{
+    type: String,
+    enum: ['in-person', 'video', 'phone', 'chat']
+  }],
+  
+  lastLogin: {
+    type: Date
+  }
 }, {
   timestamps: true
 });
@@ -99,6 +146,10 @@ const specialistSchema = new mongoose.Schema({
 specialistSchema.index({ specialty: 1, rating: -1 });
 specialistSchema.index({ isActive: 1, isOnline: 1 });
 specialistSchema.index({ name: 'text', specialty: 'text', bio: 'text' });
+// New ones
+specialistSchema.index({ email: 1 });
+specialistSchema.index({ accountStatus: 1 });
+specialistSchema.index({ specialty: 1, rating: -1 });
 
 // Virtual for formatted experience
 specialistSchema.virtual('formattedExperience').get(function() {
@@ -122,5 +173,6 @@ specialistSchema.set('toJSON', {
     return ret;
   }
 });
+
 
 export default mongoose.model('Specialist', specialistSchema);
