@@ -1,6 +1,6 @@
 import Specialist from '../models/Specialist.js';
 import jwt from 'jsonwebtoken';
-import bcrypt from 'bcryptjs';
+import bcrypt from 'bcrypt';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'mediguide-secret-key-2024';
 
