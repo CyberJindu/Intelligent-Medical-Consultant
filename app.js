@@ -9,6 +9,7 @@ import authRoutes from './routes/auth.js';
 import chatRoutes from './routes/chat.js';
 import specialistRoutes from './routes/specialists.js';
 import feedRoutes from './routes/feed.js';
+import specialistAuthRoutes from './routes/specialistAuth.js';
 
 // Import middleware
 import { corsMiddleware, errorHandler, notFoundHandler } from './middleware/validation.js';
@@ -96,6 +97,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/chat', chatRoutes);
 app.use('/api/specialists', specialistRoutes);
 app.use('/api/feed', feedRoutes);
+app.use('/api/auth/specialist', specialistAuthRoutes);
 
 // 404 handler for undefined API routes
 app.use('/api/*', notFoundHandler);
@@ -125,3 +127,4 @@ initializeApp();
 
 
 export default app;
+
