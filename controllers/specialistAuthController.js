@@ -43,7 +43,7 @@ export const specialistRegister = async (req, res) => {
       specialty,
       phone,
       bio,
-      accountStatus: process.env.AUTO_APPROVE === 'true' ? 'approved' : 'pending', // Requires admin approval
+      accountStatus: 'pending', // Requires admin approval
       lastLogin: new Date()
     });
 
