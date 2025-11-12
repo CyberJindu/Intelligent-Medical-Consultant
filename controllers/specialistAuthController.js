@@ -171,3 +171,10 @@ export const getSpecialistProfile = async (req, res) => {
     });
   }
 };
+
+
+// In the specialistRegister function, replace:
+accountStatus: 'pending',
+
+// With:
+accountStatus: process.env.AUTO_APPROVE === 'true' ? 'approved' : 'pending',
