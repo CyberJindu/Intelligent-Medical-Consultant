@@ -1,6 +1,6 @@
 import GeneratedContent from '../models/GeneratedContent.js';
 import Specialist from '../models/Specialist.js';
-import { generateMedicalContent } from '../utils/contentGenerator.js';
+import { generateMedicalContent } from '../utils/specialistContent.js';
 
 /**
  * Generate new medical content
