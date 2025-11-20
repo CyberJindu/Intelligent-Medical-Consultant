@@ -172,9 +172,45 @@ export const getSpecialistProfile = async (req, res) => {
   }
 };
 
+// Update specialist profile
+export const updateSpecialistProfile = async (req, res) => {
+  try {
+    const specialistId = req.specialistId;
+    const updateData = req.body;
 
-// In the specialistRegister function, replace:
-//accountStatus: 'pending',
+    // Remove sensitive fields that shouldn't be updated
+    delete updateData.password;
+    delete updateData.email; // Email shouldn't be changed via profile update
+    delete updateData.accountStatus;
 
-// With:
-//accountStatus: process.env.AUTO_APPROVE === 'true' ? 'approved' : 'pending',
+    const specialist = await Specialist.findByIdAndUpdate(
+      specialistId,
+      updateData,
+      { 
+        new: true, 
+        runValidators: true 
+      }
+    ).select('-password -__v');
+
+    if (!specialist) {
+      return res.status(404).json({
+        success: false,
+        message: 'Specialist not found'
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      message: 'Profile updated successfully',
+      data: { specialist }
+    });
+
+  } catch (error) {
+    console.error('Profile update error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to update profile',
+      error: error.message
+    });
+  }
+};
