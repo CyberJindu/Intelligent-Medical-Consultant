@@ -52,13 +52,11 @@ Return a JSON object with:
 Ensure the content is well-structured with headings, paragraphs, and bullet points where appropriate.
 `;
 
-    const prompt = `Generate ${contentType} about "${topic}" for ${targetAudience} with a ${tone} tone.`;
+    // FIXED: Combine system prompt and user prompt into one string
+    const fullPrompt = `${contentSystemPrompt}\n\nGenerate ${contentType} about "${topic}" for ${targetAudience} with a ${tone} tone.`;
 
-    const result = await model.generateContent([
-      { role: "user", parts: [{ text: contentSystemPrompt }] },
-      { role: "user", parts: [{ text: prompt }] }
-    ]);
-
+    // FIXED: Use simple generateContent with single prompt string
+    const result = await model.generateContent(fullPrompt);
     const response = await result.response;
     const generatedText = response.text();
 
