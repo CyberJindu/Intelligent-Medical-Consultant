@@ -1,7 +1,7 @@
-import model, { MEDICAL_SYSTEM_PROMPT } from '../config/gemini.js';
+import model from '../config/gemini.js';
 
 /**
- * Generate medical content using Gemini AI
+ * Generate specialized content using Gemini AI
  */
 export const generateMedicalContent = async (options) => {
   try {
@@ -10,80 +10,176 @@ export const generateMedicalContent = async (options) => {
       contentType,
       targetAudience = 'general_public',
       tone = 'professional',
-      specialistSpecialization
+      specialistSpecialization,
+      keywords = [],
+      title,
+      customInstructions
     } = options;
 
-    // SIMPLIFIED PROMPT - Remove complex JSON formatting that's causing issues
-    const prompt = `
-You are MediGuide AI, helping healthcare specialists create medical content.
+    // CONTENT-FOCUSED PROMPT - Completely different from medical chatbot
+    const contentPrompt = `
+You are a professional health content creator for MediGuide. Your role is to create engaging, well-structured articles and guides for healthcare specialists to share with their patients.
 
-SPECIALIST'S SPECIALIZATION: ${specialistSpecialization || 'General Medicine'}
+SPECIALIST'S BACKGROUND: ${specialistSpecialization || 'Healthcare Professional'}
 CONTENT TYPE: ${contentType}
-TARGET AUDIENCE: ${targetAudience}
-TONE: ${tone}
+TOPIC: "${topic}"
+TARGET READERS: ${targetAudience}
+DESIRED TONE: ${tone}
+${title ? `PREFERRED TITLE: ${title}` : ''}
+${keywords.length > 0 ? `KEY POINTS TO COVER: ${keywords.join(', ')}` : ''}
+${customInstructions ? `SPECIFIC INSTRUCTIONS: ${customInstructions}` : ''}
 
-Create a comprehensive medical content piece about: "${topic}"
+CONTENT CREATION GUIDELINES:
+1. Write as a comprehensive article/guide, NOT as a chatbot response
+2. Use proper article structure with headings, subheadings, and sections
+3. Provide specific, actionable advice and step-by-step guidance
+4. Include practical examples and real-world applications
+5. Use bullet points and numbered lists for clarity
+6. Make it engaging and easy to read
+7. Focus on education and empowerment
+8. Include evidence-based information when relevant
 
-Please include:
-- An engaging title
-- Well-structured content with headings
-- Evidence-based medical information
-- Practical advice and actionable insights
-- When to seek professional medical consultation
-- Preventive measures and healthy practices
+ARTICLE STRUCTURE:
+- Engaging introduction that hooks the reader
+- Clear, informative headings and subheadings
+- Detailed explanations with examples
+- Actionable steps and recommendations
+- Summary of key takeaways
+- Professional yet approachable tone
 
-Make it professional, accurate, and tailored for ${targetAudience}.
-Use clear headings, bullet points, and proper formatting.
+IMPORTANT: Do NOT write like a chatbot. Write like a professional article that would be published on a health website or shared with patients.
+
+Now create a ${contentType} about "${topic}" that follows these guidelines:
 `;
 
-    console.log('Sending prompt to Gemini:', prompt);
+    console.log('Sending content creation prompt to Gemini');
 
-    const result = await model.generateContent(prompt);
+    const result = await model.generateContent(contentPrompt);
     const response = await result.response;
     const generatedText = response.text();
 
-    console.log('Raw Gemini response:', generatedText);
+    console.log('Generated content length:', generatedText.length);
 
-    // If Gemini returns empty content, create fallback content
-    if (!generatedText || generatedText.trim() === '') {
-      console.log('Gemini returned empty content, using fallback');
-      return {
-        title: `Understanding ${topic} - Medical Guide`,
-        content: `# ${topic}\n\n## Overview\n\n${topic} is an important aspect of health and wellbeing that requires proper understanding and management.\n\n## Key Information\n\n- **Professional Guidance**: Always consult healthcare professionals for personalized advice\n- **Evidence-Based**: This content is based on current medical understanding\n- **Preventive Measures**: Regular check-ups and healthy habits are essential\n\n## Practical Advice\n\n1. Maintain regular health screenings\n2. Follow evidence-based health guidelines\n3. Consult specialists for specific concerns\n4. Stay informed about latest medical research\n\n## When to Seek Help\n\nConsult a healthcare professional if you experience:\n- Persistent symptoms\n- Sudden changes in health\n- Concerns about specific conditions\n- Need for personalized medical advice\n\n## Summary\n\nThis guide provides general information about ${topic}. For personalized medical advice, always consult qualified healthcare professionals.`,
-        summary: `A comprehensive medical guide about ${topic} for ${targetAudience}.`,
-        keyPoints: [
-          "Evidence-based medical information",
-          "Practical health recommendations", 
-          "Professional consultation guidance"
-        ]
-      };
+    // If content is too short or generic, enhance it
+    if (!generatedText || generatedText.trim().length < 300) {
+      console.log('Content too short, creating enhanced version');
+      return createEnhancedContent(topic, contentType, keywords, title, customInstructions);
     }
 
-    // Return the actual Gemini response
+    // Extract title from content if not provided
+    let contentTitle = title;
+    if (!contentTitle && generatedText.includes('#')) {
+      const titleMatch = generatedText.match(/^#\s*(.+)$/m);
+      if (titleMatch) {
+        contentTitle = titleMatch[1].trim();
+      }
+    }
+
     return {
-      title: `${topic} - Medical Guide`,
+      title: contentTitle || `${topic} - Complete Guide`,
       content: generatedText,
-      summary: `A comprehensive guide about ${topic} for ${targetAudience}.`,
-      keyPoints: [
-        "Important medical insights",
-        "Practical health advice",
-        "Professional guidance"
+      summary: `A comprehensive ${contentType.toLowerCase()} about ${topic}.`,
+      keyPoints: keywords.length > 0 ? keywords : [
+        "Practical, actionable information",
+        "Evidence-based recommendations", 
+        "Step-by-step guidance"
       ]
     };
 
   } catch (error) {
-    console.error('Error generating medical content:', error);
-    
-    // Return fallback content instead of throwing error
-    return {
-      title: `Medical Guide: ${options.topic}`,
-      content: `# ${options.topic}\n\n## Medical Content Overview\n\nThis content about ${options.topic} is being prepared for ${options.targetAudience}.\n\n### Key Areas to Cover\n\n- Understanding ${options.topic}\n- Prevention and management strategies\n- When to seek professional help\n- Evidence-based recommendations\n\n### Professional Note\n\nAs healthcare professionals, we understand the importance of accurate, evidence-based medical information. This content is designed to educate and inform ${options.targetAudience} about ${options.topic}.\n\n### Consultation Recommendation\n\nAlways consult with qualified healthcare providers for personalized medical advice and treatment plans.`,
-      summary: `A medical guide about ${options.topic} for ${options.targetAudience}.`,
-      keyPoints: [
-        "Professional medical insights",
-        "Evidence-based information",
-        "Health and wellness guidance"
-      ]
-    };
+    console.error('Error generating content:', error);
+    return createEnhancedContent(options.topic, options.contentType, options.keywords, options.title, options.customInstructions);
   }
+};
+
+// Enhanced fallback content creator
+const createEnhancedContent = (topic, contentType, keywords, title, customInstructions) => {
+  const baseTitle = title || `${topic} - Complete ${contentType.replace('_', ' ').toUpperCase()}`;
+  
+  let enhancedContent = '';
+  
+  if (contentType === 'medical_guide' || contentType === 'detailed_guide') {
+    enhancedContent = `# ${baseTitle}
+
+## Introduction
+
+${topic} is an important aspect of health and fitness that many people seek to improve. This comprehensive guide provides detailed, actionable information to help you achieve your goals effectively and safely.
+
+## Understanding the Basics
+
+Before diving into specific techniques, it's important to understand the fundamental principles behind ${topic}. This foundation will help you make informed decisions and avoid common pitfalls.
+
+${keywords.length > 0 ? `
+## Key Focus Areas
+
+Based on your specific interests, this guide covers:
+${keywords.map(keyword => `- **${keyword.trim()}**: Detailed strategies and techniques`).join('\n')}
+` : ''}
+
+## Step-by-Step Implementation
+
+### Phase 1: Getting Started
+1. **Assessment**: Evaluate your current situation and set realistic goals
+2. **Preparation**: Gather necessary resources and create your plan
+3. **Initial Actions**: Begin with foundational practices
+
+### Phase 2: Building Consistency
+1. **Daily Practices**: Incorporate sustainable habits into your routine
+2. **Progress Tracking**: Monitor your improvements and adjust as needed
+3. **Troubleshooting**: Address common challenges and obstacles
+
+### Phase 3: Advanced Techniques
+1. **Optimization**: Fine-tune your approach for better results
+2. **Prevention**: Avoid common mistakes and injuries
+3. **Long-term Maintenance**: Establish practices for sustained success
+
+## Practical Tips and Strategies
+
+- **Start Small**: Begin with manageable steps and gradually increase intensity
+- **Stay Consistent**: Regular practice yields better results than occasional intense efforts
+- **Listen to Your Body**: Pay attention to feedback and adjust accordingly
+- **Seek Professional Guidance**: Consult experts when needed for personalized advice
+
+## Common Mistakes to Avoid
+
+1. **Rushing Progress**: Allow adequate time for adaptation and improvement
+2. **Neglecting Fundamentals**: Don't skip basic principles in pursuit of advanced techniques
+3. **Ignoring Warning Signs**: Address discomfort or concerns promptly
+4. **Inconsistent Approach**: Maintain regular practice for optimal results
+
+## Expected Timeline and Results
+
+- **Short-term (2-4 weeks)**: Initial adaptation and habit formation
+- **Medium-term (1-3 months)**: Noticeable improvements and increased confidence
+- **Long-term (3+ months)**: Significant progress and established expertise
+
+## Frequently Asked Questions
+
+**Q: How quickly can I expect to see results?**
+A: Most people notice initial improvements within 2-4 weeks of consistent practice, with more significant results appearing after 2-3 months.
+
+**Q: What if I encounter difficulties?**
+A: Challenges are normal. Review the fundamentals, adjust your approach if needed, and consider consulting a professional for personalized guidance.
+
+**Q: How can I maintain motivation?**
+A: Set clear goals, track your progress, celebrate small victories, and remember why you started this journey.
+
+## Conclusion
+
+${topic} is an achievable goal with the right approach and consistent effort. This guide provides the foundation you need to get started and make meaningful progress. Remember that individual results may vary, and it's always wise to consult with healthcare or fitness professionals for personalized advice.
+
+*This content is provided for educational purposes. Always consult with qualified professionals for advice tailored to your specific circumstances.*`;
+  }
+
+  return {
+    title: baseTitle,
+    content: enhancedContent,
+    summary: `A detailed ${contentType.replace('_', ' ')} about ${topic} with practical guidance.`,
+    keyPoints: keywords.length > 0 ? keywords : [
+      "Step-by-step implementation guide",
+      "Practical strategies and techniques",
+      "Common challenges and solutions",
+      "Realistic timeline and expectations"
+    ]
+  };
 };
