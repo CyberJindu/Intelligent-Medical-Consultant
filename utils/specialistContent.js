@@ -19,8 +19,7 @@ Write a comprehensive, well-structured article that's practical and useful.
     console.log('Prompt:', prompt);
 
     const result = await model.generateContent(prompt);
-    const response = await result.response;
-    const content = response.text();
+    const content = result.text();
 
     console.log('✅ Gemini response received, length:', content.length);
 
