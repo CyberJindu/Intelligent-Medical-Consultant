@@ -1,6 +1,5 @@
 import GeneratedContent from '../models/GeneratedContent.js';
 import Specialist from '../models/Specialist.js';
-// Note: This function is expected to be in '../utils/specialistContent.js'
 import { generateMedicalContent } from '../utils/specialistContent.js'; 
 
 /**
