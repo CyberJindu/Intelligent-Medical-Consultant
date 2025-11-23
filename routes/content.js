@@ -2,6 +2,7 @@ import express from 'express';
 import {
   generateContent,
   getContentHistory,
+  approveAndSaveContent,
   updateContent,
   deleteContent
 } from '../controllers/contentController.js';
@@ -17,5 +18,6 @@ router.post('/generate', generateContent);
 router.get('/history', getContentHistory);
 router.put('/:id', updateContent);
 router.delete('/:id', deleteContent);
+router.post('/approve', approveAndSaveContent);
 
 export default router;
