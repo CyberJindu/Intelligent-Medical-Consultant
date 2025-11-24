@@ -4,6 +4,8 @@ export const generateMedicalContent = async (options) => {
   try {
     const { topic, contentType, tone, keywords, title, customInstructions } = options;
 
+    console.log('🎯 Gemini Options:', options);
+
     // SIMPLE PROMPT - Let Gemini be smart
     const prompt = `
 Write a detailed ${contentType} about "${topic}".
@@ -15,18 +17,32 @@ ${customInstructions ? `Instructions: ${customInstructions}` : ''}
 Write a comprehensive, well-structured article that's practical and useful.
 `;
 
-    console.log('📝 Calling Gemini with simple prompt');
-    console.log('Prompt:', prompt);
+    console.log('📝 Final Prompt:', prompt);
 
     const result = await model.generateContent(prompt);
     
-    // FIX 1: Proper Gemini response handling
+    // ADD DEBUGGING: Check the full result object
+    console.log('🔍 Full Gemini Result:', result);
+    console.log('🔍 Result Response:', result.response);
+    
     const response = await result.response;
     const content = response.text();
 
-    console.log('✅ Gemini response received, length:', content.length);
+    console.log('✅ Gemini RAW Content:', content);
+    console.log('📏 Content Length:', content.length);
 
-    // FIX 2: Use provided title or fallback
+    // Check if content is empty
+    if (!content || content.trim().length === 0) {
+      console.log('🚨 EMPTY CONTENT - Checking for safety blocks...');
+      
+      // Check if there are safety blocks in the response
+      if (result.response.promptFeedback) {
+        console.log('🚨 Safety Block Reason:', result.response.promptFeedback);
+      }
+      
+      throw new Error('Gemini returned empty content - likely safety filter');
+    }
+
     const contentTitle = title || `${topic} - ${contentType}`;
 
     return {
@@ -37,16 +53,17 @@ Write a comprehensive, well-structured article that's practical and useful.
     };
 
   } catch (error) {
-    console.error('❌ Gemini failed:', error);
+    console.error('❌ Gemini Generation Failed:', error);
+    console.error('❌ Error Stack:', error.stack);
     
-    // FIX 3: Proper fallback with safe variable access
+    // Better error reporting
     const fallbackTitle = options.title || `${options.topic} - Guide`;
     const fallbackKeywords = options.keywords || [];
     
     return {
       title: fallbackTitle,
-      content: `# ${fallbackTitle}\n\nContent about ${options.topic}. ${fallbackKeywords.length > 0 ? `Focus on: ${fallbackKeywords.join(', ')}` : ''}`,
-      summary: `Content about ${options.topic}`,
+      content: `# ${fallbackTitle}\n\nContent generation failed: ${error.message}\n\nPlease try again with different parameters or topic.`,
+      summary: `Content generation issue for ${options.topic}`,
       keyPoints: fallbackKeywords.length > 0 ? fallbackKeywords : ['Information']
     };
   }
