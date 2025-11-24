@@ -9,7 +9,7 @@ export const generateMedicalContent = async (options) => {
 Write a detailed ${contentType} about "${topic}".
 
 Tone: ${tone}
-${keywords.length > 0 ? `Include: ${keywords.join(', ')}` : ''}
+${keywords && keywords.length > 0 ? `Include: ${keywords.join(', ')}` : ''}
 ${customInstructions ? `Instructions: ${customInstructions}` : ''}
 
 Write a comprehensive, well-structured article that's practical and useful.
@@ -19,27 +19,35 @@ Write a comprehensive, well-structured article that's practical and useful.
     console.log('Prompt:', prompt);
 
     const result = await model.generateContent(prompt);
-    const content = result.text;
+    
+    // FIX 1: Proper Gemini response handling
+    const response = await result.response;
+    const content = response.text();
 
     console.log('✅ Gemini response received, length:', content.length);
 
-    // Just use whatever Gemini returns
+    // FIX 2: Use provided title or fallback
+    const contentTitle = title || `${topic} - ${contentType}`;
+
     return {
-      title: title || `${topic} - Guide`,
+      title: contentTitle,
       content: content,
       summary: `Content about ${topic}`,
-      keyPoints: keywords.length > 0 ? keywords : ['Practical guidance']
+      keyPoints: keywords && keywords.length > 0 ? keywords : ['Practical guidance']
     };
 
   } catch (error) {
     console.error('❌ Gemini failed:', error);
     
-    // Simple fallback
+    // FIX 3: Proper fallback with safe variable access
+    const fallbackTitle = options.title || `${options.topic} - Guide`;
+    const fallbackKeywords = options.keywords || [];
+    
     return {
-      title: title || `${topic} - Guide`,
-      content: `# ${title || topic}\n\nContent about ${topic}. ${keywords.length > 0 ? `Focus on: ${keywords.join(', ')}` : ''}`,
-      summary: `Content about ${topic}`,
-      keyPoints: keywords.length > 0 ? keywords : ['Information']
+      title: fallbackTitle,
+      content: `# ${fallbackTitle}\n\nContent about ${options.topic}. ${fallbackKeywords.length > 0 ? `Focus on: ${fallbackKeywords.join(', ')}` : ''}`,
+      summary: `Content about ${options.topic}`,
+      keyPoints: fallbackKeywords.length > 0 ? fallbackKeywords : ['Information']
     };
   }
 };
