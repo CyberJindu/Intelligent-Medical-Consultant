@@ -11,6 +11,7 @@ import specialistRoutes from './routes/specialists.js';
 import feedRoutes from './routes/feed.js';
 import specialistAuthRoutes from './routes/specialistAuth.js';
 import contentRoutes from './routes/content.js';
+import specialistProfileRoutes from './routes/specialistProfile.js';
 
 // Import middleware
 import { corsMiddleware, errorHandler, notFoundHandler } from './middleware/validation.js';
@@ -100,6 +101,7 @@ app.use('/api/specialists', specialistRoutes);
 app.use('/api/feed', feedRoutes);
 app.use('/api/auth/specialist', specialistAuthRoutes);
 app.use('/api/content', contentRoutes);
+app.use('/api/specialist', specialistProfileRoutes);
 
 // 404 handler for undefined API routes
 app.use('/api/*', notFoundHandler);
@@ -129,5 +131,6 @@ initializeApp();
 
 
 export default app;
+
 
 
