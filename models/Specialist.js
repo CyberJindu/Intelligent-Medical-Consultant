@@ -13,6 +13,14 @@ const specialistSchema = new mongoose.Schema({
     type: String,
     required: true
   },
+  profilePicture: {
+  type: String,
+  trim: true
+  },
+  cloudinaryId: {
+  type: String,
+  trim: true
+  },
   accountStatus: {
     type: String,
     enum: ['pending', 'approved', 'blocked'],
@@ -142,6 +150,8 @@ const specialistSchema = new mongoose.Schema({
   timestamps: true
 });
 
+
+
 // Index for faster queries
 specialistSchema.index({ specialty: 1, rating: -1 });
 specialistSchema.index({ isActive: 1, isOnline: 1 });
@@ -176,3 +186,4 @@ specialistSchema.set('toJSON', {
 
 
 export default mongoose.model('Specialist', specialistSchema);
+
