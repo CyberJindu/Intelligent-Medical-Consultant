@@ -113,8 +113,7 @@ export const approveAndSaveContent = async (req, res) => {
             targetAudience,
             tone,
             wordCount,
-            keywords,
-            isPublished = false // Default to false unless explicitly set
+            keywords
         } = req.body;
         
         const specialistId = req.specialistId;
@@ -138,7 +137,7 @@ export const approveAndSaveContent = async (req, res) => {
             tone: tone || 'professional',
             wordCount: wordCount || content.length, // Recalculate word count based on final content
             keywords: keywords || [],
-            isPublished,
+            isPublished: true,
             generatedAt: new Date()
         });
 
@@ -147,7 +146,7 @@ export const approveAndSaveContent = async (req, res) => {
 
         res.status(201).json({
             success: true,
-            message: 'Content approved and saved successfully!',
+            message: 'Content approved and published successfully!',
             data: newContent
         });
 
@@ -156,7 +155,7 @@ export const approveAndSaveContent = async (req, res) => {
         console.error('Content approval and save error:', error);
         res.status(500).json({
             success: false,
-            message: 'Failed to approve and save content',
+            message: 'Failed to approve and publish content',
             error: error.message
         });
     }
