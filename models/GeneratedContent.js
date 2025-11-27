@@ -32,7 +32,7 @@ const generatedContentSchema = new mongoose.Schema({
   },
   tone: {
     type: String,
-    enum: ['professional', 'friendly', 'educational', 'empathetic', 'authoritative'],
+    enum: ['professional', 'friendly', 'educational', 'empathetic', 'authoritative', 'encouraging'],
     default: 'professional'
   },
   wordCount: {
