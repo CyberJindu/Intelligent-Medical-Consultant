@@ -124,7 +124,7 @@ IMPORTANT MEDICAL DISCLAIMERS:
 /**
  * Analyze conversation to determine if specialist recommendation is needed
  */
-const analyzeForSpecialistRecommendation = (userMessage, aiResponse) => {
+export const analyzeForSpecialistRecommendation = (userMessage, aiResponse) => {
   const criticalKeywords = [
     'emergency', 'urgent', 'severe', 'critical', 'intense pain',
     'chest pain', 'difficulty breathing', 'bleeding', 'fainting',
@@ -240,3 +240,4 @@ const fallbackConversationAnalysis = (conversationText) => {
     keySymptoms
   };
 };
+
