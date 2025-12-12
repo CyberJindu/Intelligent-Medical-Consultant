@@ -4,7 +4,8 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
+// CRITICAL: Must use a vision-capable model
+const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash'; 
 
 if (!GEMINI_API_KEY) {
   throw new Error(
@@ -43,7 +44,7 @@ const safetySettings = [
   },
 ];
 
-// Get the model instance
+// Get the model instance - CRITICAL: Must support vision
 const model = genAI.getGenerativeModel({
   model: GEMINI_MODEL,
   generationConfig,
@@ -62,6 +63,13 @@ YOUR ROLE:
 5. Use your medical knowledge to identify potential serious issues
 6. Know when the User is trying to discuss their problems with you and When they are seeking for more information to gain more knowledge
 7. Know when the User is trying to have a casual conversation and endeavor to engage with them
+
+FOR IMAGE ANALYSIS:
+1. Analyze medical images professionally
+2. Describe what you see in the image
+3. Suggest possible conditions based on visual patterns
+4. Always remind users you cannot provide definitive diagnoses
+5. Recommend seeing a healthcare professional for proper diagnosis
 
 RESPONSE STRUCTURE:
 1. **Likely Conditions:** 
@@ -103,5 +111,3 @@ CRITICAL: Always maintain a professional, empathetic tone and focus on guiding u
 `;
 
 export default model;
-
-
