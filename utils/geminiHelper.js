@@ -1,16 +1,21 @@
 import model, { MEDICAL_SYSTEM_PROMPT } from '../config/gemini.js';
 
 /**
- * Generate AI response for medical conversations
+ * Generate AI response for medical conversations with optional image support
  */
-export const generateAIResponse = async (userMessage, conversationHistory = []) => {
+export const generateAIResponse = async (userMessage, conversationHistory = [], imageData = null) => {
   try {
-    // Build conversation context
+    // If image is provided, use vision model
+    if (imageData) {
+      const { imageBuffer, imageMimeType } = imageData;
+      return await generateImageResponse(userMessage, imageBuffer, imageMimeType, conversationHistory);
+    }
+    
+    // Otherwise use text-only model
     const conversationContext = conversationHistory
       .map(msg => `${msg.isUser ? 'User' : 'Assistant'}: ${msg.text}`)
       .join('\n');
 
-    // Create the full prompt with medical guidelines
     const fullPrompt = `
 ${MEDICAL_SYSTEM_PROMPT}
 
@@ -23,7 +28,6 @@ ${userMessage}
 Please provide a helpful, professional response that follows medical guidelines.
 `;
 
-    // Generate content
     const result = await model.generateContent(fullPrompt);
     const response = await result.response;
     const text = response.text();
@@ -36,7 +40,6 @@ Please provide a helpful, professional response that follows medical guidelines.
   } catch (error) {
     console.error('Gemini AI Error:', error);
     
-    // Fallback responses for different error types
     if (error.message.includes('SAFETY')) {
       return "I apologize, but I cannot provide a response to that question due to safety guidelines. For medical concerns, please consult with a healthcare professional.";
     }
@@ -49,8 +52,10 @@ Please provide a helpful, professional response that follows medical guidelines.
   }
 };
 
-// function for image analysis
-export const generateImageResponse = async (userMessage, imageBuffer, imageMimeType, conversationHistory = []) => {
+/**
+ * Generate response for image analysis
+ */
+const generateImageResponse = async (userMessage, imageBuffer, imageMimeType, conversationHistory = []) => {
   try {
     // Build conversation context
     const conversationContext = conversationHistory
@@ -113,53 +118,6 @@ IMPORTANT MEDICAL DISCLAIMERS:
     }
     
     return "I apologize, but I'm having trouble analyzing this image right now. Please try uploading a clearer image or describe the issue in text.";
-  }
-};
-
-// Update the main generateAIResponse to optionally handle images
-export const generateAIResponse = async (userMessage, conversationHistory = [], imageData = null) => {
-  try {
-    // If image is provided, use vision model
-    if (imageData) {
-      const { imageBuffer, imageMimeType } = imageData;
-      return await generateImageResponse(userMessage, imageBuffer, imageMimeType, conversationHistory);
-    }
-    
-    // Otherwise use text-only model (existing code)
-    const conversationContext = conversationHistory
-      .map(msg => `${msg.isUser ? 'User' : 'Assistant'}: ${msg.text}`)
-      .join('\n');
-
-    const fullPrompt = `
-${MEDICAL_SYSTEM_PROMPT}
-
-CONVERSATION HISTORY:
-${conversationContext}
-
-CURRENT USER MESSAGE:
-${userMessage}
-
-Please provide a helpful, professional response that follows medical guidelines.
-`;
-
-    const result = await model.generateContent(fullPrompt);
-    const response = await result.response;
-    const text = response.text();
-
-    return text;
-
-  } catch (error) {
-    console.error('Gemini AI Error:', error);
-    
-    if (error.message.includes('SAFETY')) {
-      return "I apologize, but I cannot provide a response to that question due to safety guidelines. For medical concerns, please consult with a healthcare professional.";
-    }
-    
-    if (error.message.includes('QUOTA') || error.message.includes('RATE_LIMIT')) {
-      return "I'm currently experiencing high demand. Please try again in a moment, or consult with a healthcare professional for immediate assistance.";
-    }
-    
-    return "I apologize, but I'm having trouble processing your request right now. Please try again shortly or consult with a healthcare professional for medical advice.";
   }
 };
 
@@ -281,5 +239,4 @@ const fallbackConversationAnalysis = (conversationText) => {
     confidence: 0.7,
     keySymptoms
   };
-
 };
