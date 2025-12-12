@@ -1,3 +1,4 @@
+import multer from 'multer';
 import Chat from '../models/Chat.js';
 import { generateAIResponse } from '../utils/geminiHelper.js';
 
@@ -170,6 +171,139 @@ export const deleteConversation = async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Failed to delete conversation',
+      error: error.message
+    });
+  }
+
+};
+
+// Configure multer for image upload
+const storage = multer.memoryStorage(); // Store in memory for processing
+const upload = multer({
+  storage,
+  limits: {
+    fileSize: 5 * 1024 * 1024, // 5MB limit
+  },
+  fileFilter: (req, file, cb) => {
+    if (file.mimetype.startsWith('image/')) {
+      cb(null, true);
+    } else {
+      cb(new Error('Only image files are allowed'), false);
+    }
+  }
+});
+
+// Send message with image
+export const sendMessageWithImage = async (req, res) => {
+  try {
+    const uploadMiddleware = upload.single('image');
+    
+    uploadMiddleware(req, res, async (err) => {
+      if (err) {
+        return res.status(400).json({
+          success: false,
+          message: err.message
+        });
+      }
+
+      const { message, conversationId } = req.body;
+      const imageFile = req.file;
+      const userId = req.userId;
+
+      if (!imageFile) {
+        return res.status(400).json({
+          success: false,
+          message: 'Image is required'
+        });
+      }
+
+      let chat;
+      
+      if (conversationId) {
+        // Continue existing conversation
+        chat = await Chat.findOne({ _id: conversationId, userId });
+        if (!chat) {
+          return res.status(404).json({
+            success: false,
+            message: 'Conversation not found'
+          });
+        }
+      } else {
+        // Start new conversation
+        const title = message 
+          ? message.substring(0, 50) + (message.length > 50 ? '...' : '')
+          : 'Image consultation';
+        chat = new Chat({
+          userId,
+          title,
+          messages: []
+        });
+      }
+
+      // Prepare image data for AI
+      const imageData = {
+        imageBuffer: imageFile.buffer,
+        imageMimeType: imageFile.mimetype
+      };
+
+      // Add user message with image reference
+      const userMessage = {
+        text: message || 'Image uploaded',
+        isUser: true,
+        timestamp: new Date(),
+        hasImage: true,
+        imageInfo: {
+          mimetype: imageFile.mimetype,
+          size: imageFile.size,
+          originalname: imageFile.originalname
+        }
+      };
+      chat.messages.push(userMessage);
+
+      // Generate AI response with image analysis
+      const aiResponse = await generateAIResponse(message || '', chat.messages, imageData);
+      
+      // Add AI message
+      const aiMessage = {
+        text: aiResponse,
+        isUser: false,
+        timestamp: new Date(),
+        isImageAnalysis: true
+      };
+      chat.messages.push(aiMessage);
+
+      // Update conversation title
+      if (chat.messages.length === 2) {
+        chat.title = message 
+          ? message.substring(0, 50) + (message.length > 50 ? '...' : '')
+          : 'Image Consultation';
+      }
+
+      chat.updatedAt = new Date();
+      await chat.save();
+
+      res.status(200).json({
+        success: true,
+        data: {
+          conversationId: chat._id,
+          userMessage: {
+            ...userMessage,
+            // For frontend preview - in production, you'd upload to cloud storage
+            imagePreview: `data:${imageFile.mimetype};base64,${imageFile.buffer.toString('base64').slice(0, 100)}...`
+          },
+          aiMessage,
+          needsSpecialist: aiMessage.text.toLowerCase().includes('specialist') || 
+                          aiMessage.text.toLowerCase().includes('doctor') ||
+                          aiMessage.text.toLowerCase().includes('emergency')
+        }
+      });
+    });
+
+  } catch (error) {
+    console.error('Image chat error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to process image message',
       error: error.message
     });
   }
