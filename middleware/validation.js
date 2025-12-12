@@ -85,24 +85,37 @@ export const validateSendMessage = (req, res, next) => {
   next();
 };
 
-// Specialist recommendation validation
+// Specialist recommendation validation 
 export const validateSpecialistRecommendation = (req, res, next) => {
   const { conversationContext } = req.body;
 
-  if (!conversationContext || conversationContext.trim() === '') {
+  // Check if conversationContext exists and is a string
+  if (!conversationContext || typeof conversationContext !== 'string') {
     return res.status(400).json({
       success: false,
-      message: 'Conversation context is required'
+      message: 'Valid conversation context (string) is required'
     });
   }
 
-  if (conversationContext.length > 5000) {
+  // Now safely trim since we know it's a string
+  const trimmedContext = conversationContext.trim();
+  
+  if (trimmedContext === '') {
+    return res.status(400).json({
+      success: false,
+      message: 'Conversation context cannot be empty'
+    });
+  }
+
+  if (trimmedContext.length > 5000) {
     return res.status(400).json({
       success: false,
       message: 'Conversation context too long'
     });
   }
 
+  // Replace with trimmed version
+  req.body.conversationContext = trimmedContext;
   next();
 };
 
@@ -194,4 +207,5 @@ export const notFoundHandler = (req, res) => {
     success: false,
     message: `Route not found: ${req.method} ${req.originalUrl}`
   });
+
 };
