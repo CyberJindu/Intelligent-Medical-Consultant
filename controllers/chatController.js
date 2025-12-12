@@ -1,6 +1,7 @@
 import multer from 'multer';
 import Chat from '../models/Chat.js';
-import { generateAIResponse } from '../utils/geminiHelper.js';
+import { generateAIResponse, analyzeForSpecialistRecommendation } from '../utils/geminiHelper.js';
+
 
 // Send message to AI and get response
 export const sendMessage = async (req, res) => {
@@ -262,6 +263,9 @@ export const sendMessageWithImage = async (req, res) => {
 
       // Generate AI response with image analysis
       const aiResponse = await generateAIResponse(message || '', chat.messages, imageData);
+
+      // Check if Specialist is needed
+      const needsSpecialist = analyzeForSpecialistRecommendation(message || '', aiResponse);
       
       // Add AI message
       const aiMessage = {
@@ -292,9 +296,9 @@ export const sendMessageWithImage = async (req, res) => {
             imagePreview: `data:${imageFile.mimetype};base64,${imageFile.buffer.toString('base64').slice(0, 100)}...`
           },
           aiMessage,
-          needsSpecialist: aiMessage.text.toLowerCase().includes('specialist') || 
-                          aiMessage.text.toLowerCase().includes('doctor') ||
-                          aiMessage.text.toLowerCase().includes('emergency')
+          needsSpecialist: needsSpecialist || aiMessage.text.toLowerCase().includes('specialist') || 
+                aiMessage.text.toLowerCase().includes('doctor') ||
+                aiMessage.text.toLowerCase().includes('emergency')
         }
       });
     });
@@ -308,3 +312,4 @@ export const sendMessageWithImage = async (req, res) => {
     });
   }
 };
+
