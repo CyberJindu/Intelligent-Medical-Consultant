@@ -1,13 +1,14 @@
 import Specialist from '../models/Specialist.js';
 import cloudinary from '../config/cloudinary.js';
 
-// Upload document to Cloudinary
-const uploadDocumentToCloudinary = async (file, specialistId, documentType) => {
+// Upload document to Cloudinary (using base64 like your profile picture upload)
+const uploadDocumentToCloudinary = async (base64File, specialistId, documentType) => {
   try {
-    const result = await cloudinary.uploader.upload(file, {
+    const result = await cloudinary.uploader.upload(base64File, {
       folder: `mediguide/verification/${specialistId}`,
-      resource_type: 'auto',
-      public_id: `${documentType}_${Date.now()}`
+      resource_type: 'auto', // Handles both images and PDFs
+      public_id: `${documentType}_${Date.now()}`,
+      allowed_formats: ['jpg', 'jpeg', 'png', 'pdf']
     });
     return result;
   } catch (error) {
@@ -20,16 +21,17 @@ const uploadDocumentToCloudinary = async (file, specialistId, documentType) => {
 export const submitVerification = async (req, res) => {
   try {
     const specialistId = req.specialistId;
-    const files = req.files;
+    const { idProof, license, experience } = req.body; // These are base64 strings
     
-    if (!files || Object.keys(files).length === 0) {
+    // Validate required documents
+    if (!idProof || !license || !experience) {
       return res.status(400).json({
         success: false,
-        message: 'No documents uploaded'
+        message: 'All three documents are required: ID Proof, License, and Experience Certificate'
       });
     }
 
-    // Check if already verified or pending
+    // Check if specialist exists
     const specialist = await Specialist.findById(specialistId);
     if (!specialist) {
       return res.status(404).json({
@@ -38,6 +40,7 @@ export const submitVerification = async (req, res) => {
       });
     }
 
+    // Check verification status
     if (specialist.verificationStatus === 'verified') {
       return res.status(400).json({
         success: false,
@@ -53,52 +56,38 @@ export const submitVerification = async (req, res) => {
     }
 
     const verificationDocuments = [];
-    const uploadPromises = [];
+    
+    try {
+      // Upload ID Proof
+      const idResult = await uploadDocumentToCloudinary(idProof, specialistId, 'id_proof');
+      verificationDocuments.push({
+        documentType: 'id_proof',
+        documentUrl: idResult.secure_url,
+        uploadedAt: new Date()
+      });
 
-    // Process ID Proof
-    if (files.idProof) {
-      uploadPromises.push(
-        uploadDocumentToCloudinary(files.idProof[0].path, specialistId, 'id_proof')
-          .then(result => {
-            verificationDocuments.push({
-              documentType: 'id_proof',
-              documentUrl: result.secure_url,
-              uploadedAt: new Date()
-            });
-          })
-      );
+      // Upload License
+      const licenseResult = await uploadDocumentToCloudinary(license, specialistId, 'license');
+      verificationDocuments.push({
+        documentType: 'license',
+        documentUrl: licenseResult.secure_url,
+        uploadedAt: new Date()
+      });
+
+      // Upload Experience
+      const experienceResult = await uploadDocumentToCloudinary(experience, specialistId, 'experience');
+      verificationDocuments.push({
+        documentType: 'experience',
+        documentUrl: experienceResult.secure_url,
+        uploadedAt: new Date()
+      });
+    } catch (uploadError) {
+      return res.status(400).json({
+        success: false,
+        message: 'Failed to upload documents',
+        error: uploadError.message
+      });
     }
-
-    // Process License
-    if (files.license) {
-      uploadPromises.push(
-        uploadDocumentToCloudinary(files.license[0].path, specialistId, 'license')
-          .then(result => {
-            verificationDocuments.push({
-              documentType: 'license',
-              documentUrl: result.secure_url,
-              uploadedAt: new Date()
-            });
-          })
-      );
-    }
-
-    // Process Experience
-    if (files.experience) {
-      uploadPromises.push(
-        uploadDocumentToCloudinary(files.experience[0].path, specialistId, 'experience')
-          .then(result => {
-            verificationDocuments.push({
-              documentType: 'experience',
-              documentUrl: result.secure_url,
-              uploadedAt: new Date()
-            });
-          })
-      );
-    }
-
-    // Wait for all uploads to complete
-    await Promise.all(uploadPromises);
 
     // Update specialist with verification data
     specialist.verificationStatus = 'pending';
@@ -132,7 +121,7 @@ export const getVerificationStatus = async (req, res) => {
     const specialistId = req.specialistId;
     
     const specialist = await Specialist.findById(specialistId)
-      .select('verificationStatus verificationDocuments verificationDate');
+      .select('verificationStatus verificationDocuments verificationDate verificationNotes');
 
     if (!specialist) {
       return res.status(404).json({
@@ -146,7 +135,8 @@ export const getVerificationStatus = async (req, res) => {
       data: {
         verificationStatus: specialist.verificationStatus,
         verificationDocuments: specialist.verificationDocuments,
-        verificationDate: specialist.verificationDate
+        verificationDate: specialist.verificationDate,
+        verificationNotes: specialist.verificationNotes
       }
     });
 
@@ -164,12 +154,12 @@ export const getVerificationStatus = async (req, res) => {
 export const updateVerificationStatus = async (req, res) => {
   try {
     const { specialistId } = req.params;
-    const { status, notes } = req.body;
+    const { status, notes, verificationLevel = 'basic' } = req.body;
 
-    if (!['verified', 'rejected'].includes(status)) {
+    if (!['verified', 'rejected', 'pending'].includes(status)) {
       return res.status(400).json({
         success: false,
-        message: 'Invalid status. Must be "verified" or "rejected"'
+        message: 'Invalid status. Must be "verified", "pending", or "rejected"'
       });
     }
 
@@ -182,15 +172,30 @@ export const updateVerificationStatus = async (req, res) => {
     }
 
     specialist.verificationStatus = status;
+    
     if (notes) specialist.verificationNotes = notes;
-    if (status === 'verified') specialist.verificationDate = new Date();
+    
+    if (status === 'verified') {
+      specialist.verificationDate = new Date();
+      specialist.verificationLevel = verificationLevel;
+    }
     
     await specialist.save();
 
     res.status(200).json({
       success: true,
       message: `Verification status updated to ${status}`,
-      data: { specialist }
+      data: { 
+        specialist: {
+          _id: specialist._id,
+          name: specialist.name,
+          email: specialist.email,
+          verificationStatus: specialist.verificationStatus,
+          verificationLevel: specialist.verificationLevel,
+          verificationDate: specialist.verificationDate,
+          verificationNotes: specialist.verificationNotes
+        }
+      }
     });
 
   } catch (error) {
