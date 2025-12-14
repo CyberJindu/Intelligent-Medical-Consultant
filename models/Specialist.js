@@ -28,7 +28,7 @@ const specialistSchema = new mongoose.Schema({
   },
   verificationStatus: {
     type: String,
-    enum: ['unverified', 'verified', 'rejected'],
+    enum: ['unverified', 'pending', 'verified', 'rejected'],
     default: 'unverified'
   },
   verificationDocuments: [{
@@ -186,4 +186,5 @@ specialistSchema.set('toJSON', {
 
 
 export default mongoose.model('Specialist', specialistSchema);
+
 
