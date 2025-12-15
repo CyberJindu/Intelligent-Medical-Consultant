@@ -1,26 +1,30 @@
 import HealthPost from '../models/HealthPost.js';
-import { generatePersonalizedContent } from '../utils/contentGenerator.js';
+import User from '../models/User.js';
+import { generatePersonalizedContent, getPersonalizedContentQuery } from '../utils/contentGenerator.js';
 
-// Get personalized health feed
+// Get personalized health feed based on user's conversation topics
 export const getPersonalizedFeed = async (req, res) => {
   try {
     const userId = req.userId;
     
-    // In a real app, we'd analyze user's chat history for interests
-    // For now, we'll return general health content
-    const feed = await HealthPost.find({ isActive: true })
-      .select('title content excerpt author publishDate readTime topics image')
-      .sort({ publishDate: -1 })
-      .limit(10);
+    // Get personalized query for this user
+    const { query, sort, limit } = await getPersonalizedContentQuery(userId, 15);
+    
+    // Fetch content with personalized query
+    const feed = await HealthPost.find(query)
+      .select('title content excerpt author authorType publishDate readTime topics image shareCount saveCount')
+      .sort(sort)
+      .limit(limit);
 
-    // If we have user data, we could personalize this further
+    // Personalize the feed with relevance scores
     const personalizedFeed = await generatePersonalizedContent(feed, userId);
 
     res.status(200).json({
       success: true,
       data: { 
         feed: personalizedFeed,
-        generatedAt: new Date()
+        generatedAt: new Date(),
+        personalizationLevel: personalizedFeed.length > 0 ? 'high' : 'medium'
       }
     });
 
@@ -34,10 +38,11 @@ export const getPersonalizedFeed = async (req, res) => {
   }
 };
 
-// Get feed by topics
+// Get feed by specific topics
 export const getFeedByTopics = async (req, res) => {
   try {
     const { topics } = req.query;
+    const userId = req.userId;
     
     if (!topics) {
       return res.status(400).json({
@@ -48,19 +53,30 @@ export const getFeedByTopics = async (req, res) => {
 
     const topicArray = Array.isArray(topics) ? topics : [topics];
     
+    // Also fetch user to check if these are their interests
+    const user = await User.findById(userId);
+    const isUserInterest = user ? 
+      topicArray.some(topic => 
+        user.conversationTopics?.some(ct => ct.topic.includes(topic))
+      ) : false;
+    
     const feed = await HealthPost.find({
       topics: { $in: topicArray },
       isActive: true
     })
-    .select('title content excerpt author publishDate readTime topics image')
+    .select('title content excerpt author authorType publishDate readTime topics image shareCount saveCount')
     .sort({ publishDate: -1 })
     .limit(15);
+
+    // Personalize even topic-based feeds
+    const personalizedFeed = await generatePersonalizedContent(feed, userId);
 
     res.status(200).json({
       success: true,
       data: { 
-        feed,
-        topics: topicArray
+        feed: personalizedFeed,
+        topics: topicArray,
+        isUserInterest: isUserInterest
       }
     });
 
@@ -74,19 +90,43 @@ export const getFeedByTopics = async (req, res) => {
   }
 };
 
-// Save article for later
+// Save article for later (update user's interests)
 export const saveArticle = async (req, res) => {
   try {
     const { articleId } = req.params;
     const userId = req.userId;
 
-    // This would typically update user's saved articles
-    // For now, we'll just return success
-    // In a real implementation, we'd have a UserSavedArticles model
+    const article = await HealthPost.findById(articleId);
+    
+    if (!article) {
+      return res.status(404).json({
+        success: false,
+        message: 'Article not found'
+      });
+    }
+
+    // Increment save count on article
+    article.saveCount += 1;
+    await article.save();
+
+    // Update user's interests based on article topics
+    const user = await User.findById(userId);
+    if (user && article.topics && article.topics.length > 0) {
+      const newTopics = article.topics.map(topic => ({
+        topic: topic.toLowerCase(),
+        category: 'wellness',
+        severity: 'informational'
+      }));
+      
+      await user.updateConversationTopics(newTopics, `Saved article: ${article.title}`);
+    }
 
     res.status(200).json({
       success: true,
-      message: 'Article saved successfully'
+      message: 'Article saved successfully',
+      data: {
+        saveCount: article.saveCount
+      }
     });
 
   } catch (error) {
@@ -99,10 +139,11 @@ export const saveArticle = async (req, res) => {
   }
 };
 
-// Share article
+// Share article (track engagement)
 export const shareArticle = async (req, res) => {
   try {
     const { articleId } = req.params;
+    const userId = req.userId;
 
     const article = await HealthPost.findById(articleId);
     
@@ -116,6 +157,18 @@ export const shareArticle = async (req, res) => {
     // Increment share count
     article.shareCount += 1;
     await article.save();
+
+    // Track user engagement
+    const user = await User.findById(userId);
+    if (user) {
+      user.contentEngagement.push({
+        contentId: articleId,
+        contentType: 'article',
+        engagementType: 'shared',
+        timestamp: new Date()
+      });
+      await user.save();
+    }
 
     res.status(200).json({
       success: true,
