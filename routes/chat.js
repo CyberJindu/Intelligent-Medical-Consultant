@@ -4,7 +4,9 @@ import {
   getConversations, 
   getConversation, 
   deleteConversation,
-  sendMessageWithImage  // Add this import
+  sendMessageWithImage,
+  extractTopicsFromConversation,  
+  updateUserHealthInterests       
 } from '../controllers/chatController.js';
 import { authMiddleware } from '../middleware/auth.js';
 import { validateSendMessage } from '../middleware/validation.js';
@@ -17,8 +19,14 @@ router.use(authMiddleware);
 // Send message to AI
 router.post('/send', validateSendMessage, sendMessage);
 
-// NEW: Send message with image
+// Send message with image
 router.post('/send-image', sendMessageWithImage);
+
+// Extract topics from conversation
+router.post('/extract-topics', extractTopicsFromConversation);
+
+// Update user health interests
+router.post('/update-interests', updateUserHealthInterests);
 
 // Get user's conversation list
 router.get('/conversations', getConversations);
