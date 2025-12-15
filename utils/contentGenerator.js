@@ -1,19 +1,50 @@
 import HealthPost from '../models/HealthPost.js';
+import User from '../models/User.js';
 import { analyzeConversationForSpecialty } from './geminiHelper.js';
 
 /**
- * Generate personalized health content based on user's conversations
+ * Generate personalized health content based on user's ACTUAL conversation topics
  */
 export const generatePersonalizedContent = async (baseFeed, userId) => {
   try {
-    // In a full implementation, we'd analyze user's chat history
-    // For now, we'll enhance the base feed with some personalization logic
+    // 🔥 FIXED: Get REAL user data
+    const user = await User.findById(userId);
     
-    const personalizedFeed = baseFeed.map(post => ({
-      ...post.toObject(),
-      relevanceScore: calculateRelevanceScore(post, userId),
-      isNew: isContentNew(post, userId)
-    }));
+    if (!user) {
+      console.log('User not found for personalization, returning base feed');
+      return baseFeed;
+    }
+    
+    // Get user's top health interests from conversation topics
+    const userInterests = user.getTopHealthInterests(10);
+    const userTopics = userInterests.map(interest => interest.topic);
+    
+    // If user has no topics yet, return base feed
+    if (userTopics.length === 0) {
+      console.log('No user topics found for personalization');
+      return baseFeed.map(post => ({
+        ...post.toObject(),
+        relevanceScore: 10, // Base score for new users
+        isNew: isContentNew(post, userId),
+        reason: 'No user topics yet'
+      }));
+    }
+    
+    console.log('Personalizing for user topics:', userTopics);
+    
+    // 🔥 FIXED: Calculate REAL relevance scores based on user topics
+    const personalizedFeed = baseFeed.map(post => {
+      const relevanceScore = calculateRelevanceScore(post, userTopics, userInterests);
+      const matchingTopics = findMatchingTopics(post, userTopics);
+      
+      return {
+        ...post.toObject(),
+        relevanceScore,
+        isNew: isContentNew(post, userId),
+        matchingTopics, // Which user topics matched this content
+        matchPercentage: Math.round((matchingTopics.length / userTopics.length) * 100)
+      };
+    });
 
     // Sort by relevance score (highest first)
     personalizedFeed.sort((a, b) => b.relevanceScore - a.relevanceScore);
@@ -22,36 +53,87 @@ export const generatePersonalizedContent = async (baseFeed, userId) => {
 
   } catch (error) {
     console.error('Content personalization error:', error);
-    return baseFeed;
+    // Return base feed with fallback scores
+    return baseFeed.map(post => ({
+      ...post.toObject(),
+      relevanceScore: 20,
+      isNew: isContentNew(post, userId),
+      reason: 'Personalization error'
+    }));
   }
 };
 
 /**
- * Calculate relevance score for content based on user's potential interests
+ * 🔥 FIXED: Calculate REAL relevance score based on ACTUAL user topics
  */
-const calculateRelevanceScore = (post, userId) => {
+const calculateRelevanceScore = (post, userTopics, userInterests) => {
   let score = 0;
   
-  // Base score based on recency (newer content gets higher score)
-  const daysOld = (new Date() - post.publishDate) / (1000 * 60 * 60 * 24);
-  score += Math.max(0, 100 - (daysOld * 2)); // Lose 2 points per day
-  
-  // Boost score for popular content
-  score += Math.min(post.shareCount * 0.5, 20);
-  score += Math.min(post.saveCount * 1, 30);
-  
-  // Topic-based scoring (in real app, based on user's chat history)
-  // For now, using some common health topics
-  const commonHealthInterests = ['wellness', 'prevention', 'nutrition', 'exercise'];
-  const hasCommonInterest = post.topics.some(topic => 
-    commonHealthInterests.includes(topic.toLowerCase())
+  // 1. Topic Matching (40 points max)
+  const postTopics = post.topics || [];
+  const matchingTopics = postTopics.filter(topic => 
+    userTopics.some(userTopic => 
+      topic.toLowerCase().includes(userTopic.toLowerCase()) ||
+      userTopic.toLowerCase().includes(topic.toLowerCase())
+    )
   );
   
-  if (hasCommonInterest) {
-    score += 15;
+  score += Math.min(matchingTopics.length * 10, 40);
+  
+  // 2. Recency (30 points max)
+  const daysOld = (new Date() - post.publishDate) / (1000 * 60 * 60 * 24);
+  score += Math.max(0, 30 - (daysOld * 1.5)); // Lose 1.5 points per day
+  
+  // 3. Content Quality Signals (20 points max)
+  score += Math.min(post.shareCount * 0.2, 10);
+  score += Math.min(post.saveCount * 0.4, 10);
+  
+  // 4. Author Credibility (10 points)
+  if (post.authorType === 'verified_specialist') {
+    score += 10;
+  } else if (post.authorType === 'medical_expert') {
+    score += 5;
   }
   
-  return Math.round(score);
+  // 5. User Interest Relevance (extra 0-20 points based on interest scores)
+  if (userInterests && userInterests.length > 0) {
+    let interestBonus = 0;
+    userInterests.forEach(interest => {
+      if (postTopics.some(topic => 
+        topic.toLowerCase().includes(interest.topic.toLowerCase()) ||
+        interest.topic.toLowerCase().includes(topic.toLowerCase())
+      )) {
+        // Add bonus based on how relevant this topic is to the user
+        interestBonus += Math.min(interest.relevanceScore / 10, 5);
+      }
+    });
+    score += Math.min(interestBonus, 20);
+  }
+  
+  return Math.round(Math.min(score, 100));
+};
+
+/**
+ * Find which user topics match the content
+ */
+const findMatchingTopics = (post, userTopics) => {
+  const postTopics = post.topics || [];
+  const matching = [];
+  
+  postTopics.forEach(postTopic => {
+    userTopics.forEach(userTopic => {
+      if (postTopic.toLowerCase().includes(userTopic.toLowerCase()) ||
+          userTopic.toLowerCase().includes(postTopic.toLowerCase())) {
+        matching.push({
+          postTopic,
+          userTopic,
+          exactMatch: postTopic.toLowerCase() === userTopic.toLowerCase()
+        });
+      }
+    });
+  });
+  
+  return matching;
 };
 
 /**
@@ -65,6 +147,63 @@ const isContentNew = (post, userId) => {
   
   return post.publishDate > sevenDaysAgo;
 };
+
+/**
+ * 🔥 NEW: Get personalized content query for user
+ */
+export const getPersonalizedContentQuery = async (userId, limit = 10) => {
+  try {
+    const user = await User.findById(userId);
+    
+    if (!user) {
+      // Return general content for non-existent users
+      return {
+        query: { isActive: true },
+        sort: { publishDate: -1 },
+        limit
+      };
+    }
+    
+    const userInterests = user.getTopHealthInterests(5);
+    const userTopics = userInterests.map(interest => interest.topic);
+    
+    if (userTopics.length === 0) {
+      // No topics yet, return general content
+      return {
+        query: { isActive: true },
+        sort: { publishDate: -1 },
+        limit
+      };
+    }
+    
+    // Build query to match user topics
+    return {
+      query: {
+        isActive: true,
+        $or: [
+          { topics: { $in: userTopics } },
+          { 
+            $or: userTopics.map(topic => ({
+              title: { $regex: topic, $options: 'i' }
+            }))
+          }
+        ]
+      },
+      sort: { publishDate: -1 },
+      limit
+    };
+    
+  } catch (error) {
+    console.error('Personalized query error:', error);
+    return {
+      query: { isActive: true },
+      sort: { publishDate: -1 },
+      limit
+    };
+  }
+};
+
+
 
 /**
  * Generate health content topics based on common medical issues
@@ -151,4 +290,5 @@ export const createSampleHealthContent = async () => {
   } catch (error) {
     console.error('Error creating sample health content:', error);
   }
+
 };
