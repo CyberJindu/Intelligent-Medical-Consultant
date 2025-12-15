@@ -7,7 +7,7 @@ import { analyzeConversationForSpecialty } from './geminiHelper.js';
  */
 export const generatePersonalizedContent = async (baseFeed, userId) => {
   try {
-    // 🔥 FIXED: Get REAL user data
+    // Get REAL user data
     const user = await User.findById(userId);
     
     if (!user) {
@@ -32,7 +32,7 @@ export const generatePersonalizedContent = async (baseFeed, userId) => {
     
     console.log('Personalizing for user topics:', userTopics);
     
-    // 🔥 FIXED: Calculate REAL relevance scores based on user topics
+    // Calculate REAL relevance scores based on user topics
     const personalizedFeed = baseFeed.map(post => {
       const relevanceScore = calculateRelevanceScore(post, userTopics, userInterests);
       const matchingTopics = findMatchingTopics(post, userTopics);
@@ -64,7 +64,7 @@ export const generatePersonalizedContent = async (baseFeed, userId) => {
 };
 
 /**
- * 🔥 FIXED: Calculate REAL relevance score based on ACTUAL user topics
+ * Calculate REAL relevance score based on ACTUAL user topics
  */
 const calculateRelevanceScore = (post, userTopics, userInterests) => {
   let score = 0;
@@ -149,7 +149,7 @@ const isContentNew = (post, userId) => {
 };
 
 /**
- * 🔥 NEW: Get personalized content query for user
+ * Get personalized content query for user
  */
 export const getPersonalizedContentQuery = async (userId, limit = 10) => {
   try {
@@ -292,3 +292,4 @@ export const createSampleHealthContent = async () => {
   }
 
 };
+
