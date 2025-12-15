@@ -1,7 +1,7 @@
 import Specialist from '../models/Specialist.js';
-import { analyzeConversationForSpecialist } from '../utils/specialistMatching.js';
+import { findMatchingSpecialists, getVerifiedSpecialistsBySpecialty } from '../utils/specialistMatching.js';
 
-// Get recommended specialists based on conversation
+// Get recommended specialists based on conversation WITH VERIFICATION PRIORITY
 export const getRecommendedSpecialists = async (req, res) => {
   try {
     const { conversationContext } = req.body;
@@ -13,42 +13,41 @@ export const getRecommendedSpecialists = async (req, res) => {
       });
     }
 
-    // Analyze conversation to determine needed specialty
-    const analysis = await analyzeConversationForSpecialist(conversationContext);
-    
-    let specialists = [];
-    
-    if (analysis.recommendedSpecialty) {
-      // Find specialists matching the recommended specialty
-      specialists = await Specialist.find({
-        specialty: { $regex: analysis.recommendedSpecialty, $options: 'i' },
-        isActive: true
-      })
-      .select('name specialty bio rating experience phone availability')
-      .limit(5)
-      .sort({ rating: -1, experience: -1 });
-    }
+    // Use updated matching function with verification priority
+    const specialists = await findMatchingSpecialists({ 
+      recommendedSpecialty: 'General Physician', // Default
+      severity: 'routine',
+      conversationContext 
+    }, 5);
 
-    // If no specific specialty found or no specialists, return general physicians
-    if (specialists.length === 0) {
-      specialists = await Specialist.find({
-        specialty: { $regex: 'general|physician', $options: 'i' },
-        isActive: true
-      })
-      .select('name specialty bio rating experience phone availability')
-      .limit(3)
-      .sort({ rating: -1 });
-    }
+    // Format response with verification highlights
+    const formattedSpecialists = specialists.map(specialist => ({
+      _id: specialist._id,
+      name: specialist.name,
+      specialty: specialist.specialty,
+      subSpecialty: specialist.subSpecialty,
+      bio: specialist.bio,
+      rating: specialist.rating,
+      experience: specialist.experience,
+      verificationStatus: specialist.verificationStatus,
+      verificationLevel: specialist.verificationLevel,
+      isVerified: specialist.verificationStatus === 'verified',
+      matchScore: specialist.matchScore,
+      verificationBoost: specialist.verificationBoost,
+      totalScore: specialist.totalScore,
+      languages: specialist.languages,
+      responseTime: specialist.responseTime,
+      consultationTypes: specialist.consultationTypes,
+      rank: specialists.indexOf(specialist) + 1
+    }));
 
     res.status(200).json({
       success: true,
       data: {
-        specialists,
-        analysis: {
-          recommendedSpecialty: analysis.recommendedSpecialty,
-          severity: analysis.severity,
-          confidence: analysis.confidence
-        }
+        specialists: formattedSpecialists,
+        verificationImpact: true, // Indicates verification affected ranking
+        topSpecialistVerified: formattedSpecialists[0]?.isVerified || false,
+        verifiedCount: formattedSpecialists.filter(s => s.isVerified).length
       }
     });
 
@@ -62,10 +61,10 @@ export const getRecommendedSpecialists = async (req, res) => {
   }
 };
 
-// Get all specialists (for browsing)
+// Get all specialists with verification filtering
 export const getAllSpecialists = async (req, res) => {
   try {
-    const { specialty, search } = req.query;
+    const { specialty, search, verifiedOnly } = req.query;
     
     let filter = { isActive: true };
     
@@ -80,14 +79,27 @@ export const getAllSpecialists = async (req, res) => {
         { bio: { $regex: search, $options: 'i' } }
       ];
     }
+    
+    // VERIFICATION FILTER
+    if (verifiedOnly === 'true') {
+      filter.verificationStatus = 'verified';
+    }
 
     const specialists = await Specialist.find(filter)
-      .select('name specialty bio rating experience phone availability languages isOnline')
-      .sort({ rating: -1, isOnline: -1 });
+      .select('name specialty bio rating experience verificationStatus verificationLevel verificationDate languages isAvailableForConsultation')
+      .sort({ 
+        verificationStatus: -1, // Verified first
+        verificationLevel: -1, // Expert first
+        rating: -1 
+      });
 
     res.status(200).json({
       success: true,
-      data: { specialists }
+      data: { 
+        specialists,
+        verifiedCount: specialists.filter(s => s.verificationStatus === 'verified').length,
+        totalCount: specialists.length
+      }
     });
 
   } catch (error) {
@@ -108,7 +120,7 @@ export const getSpecialist = async (req, res) => {
     const specialist = await Specialist.findOne({ 
       _id: specialistId, 
       isActive: true 
-    });
+    }).select('-password');
 
     if (!specialist) {
       return res.status(404).json({
@@ -117,9 +129,19 @@ export const getSpecialist = async (req, res) => {
       });
     }
 
+    // Add verification highlights
+    const specialistWithHighlights = {
+      ...specialist.toObject(),
+      isVerified: specialist.verificationStatus === 'verified',
+      verificationBadge: specialist.verificationStatus === 'verified' ? 
+        `${specialist.verificationLevel || 'basic'} verified` : null,
+      verificationDateFormatted: specialist.verificationDate ? 
+        specialist.verificationDate.toLocaleDateString() : null
+    };
+
     res.status(200).json({
       success: true,
-      data: { specialist }
+      data: { specialist: specialistWithHighlights }
     });
 
   } catch (error) {
@@ -127,6 +149,48 @@ export const getSpecialist = async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Failed to fetch specialist details',
+      error: error.message
+    });
+  }
+};
+
+// Get only verified specialists
+export const getVerifiedSpecialists = async (req, res) => {
+  try {
+    const { specialty } = req.query;
+    
+    let filter = { 
+      isActive: true,
+      verificationStatus: 'verified'
+    };
+    
+    if (specialty) {
+      filter.specialty = { $regex: specialty, $options: 'i' };
+    }
+
+    const specialists = await Specialist.find(filter)
+      .select('name specialty bio rating experience verificationLevel verificationDate languages')
+      .sort({ verificationLevel: -1, rating: -1 })
+      .limit(20);
+
+    res.status(200).json({
+      success: true,
+      data: { 
+        specialists,
+        count: specialists.length,
+        levels: {
+          expert: specialists.filter(s => s.verificationLevel === 'expert').length,
+          advanced: specialists.filter(s => s.verificationLevel === 'advanced').length,
+          basic: specialists.filter(s => s.verificationLevel === 'basic').length
+        }
+      }
+    });
+
+  } catch (error) {
+    console.error('Get verified specialists error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch verified specialists',
       error: error.message
     });
   }
