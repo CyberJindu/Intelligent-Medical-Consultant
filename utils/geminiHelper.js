@@ -5,13 +5,11 @@ import model, { MEDICAL_SYSTEM_PROMPT } from '../config/gemini.js';
  */
 export const generateAIResponse = async (userMessage, conversationHistory = [], imageData = null) => {
   try {
-    // If image is provided, use vision model
     if (imageData) {
       const { imageBuffer, imageMimeType } = imageData;
       return await generateImageResponse(userMessage, imageBuffer, imageMimeType, conversationHistory);
     }
     
-    // Otherwise use text-only model
     const conversationContext = conversationHistory
       .map(msg => `${msg.isUser ? 'User' : 'Assistant'}: ${msg.text}`)
       .join('\n');
@@ -31,9 +29,6 @@ Please provide a helpful, professional response that follows medical guidelines.
     const result = await model.generateContent(fullPrompt);
     const response = await result.response;
     const text = response.text();
-
-    // Analyze if specialist recommendation is needed
-    const needsSpecialist = analyzeForSpecialistRecommendation(userMessage, text);
 
     return text;
 
@@ -57,12 +52,10 @@ Please provide a helpful, professional response that follows medical guidelines.
  */
 const generateImageResponse = async (userMessage, imageBuffer, imageMimeType, conversationHistory = []) => {
   try {
-    // Build conversation context
     const conversationContext = conversationHistory
       .map(msg => `${msg.isUser ? 'User' : 'Assistant'}: ${msg.text}`)
       .join('\n');
 
-    // Prepare the prompt for image analysis
     const prompt = `
 ${MEDICAL_SYSTEM_PROMPT}
 
@@ -84,10 +77,8 @@ IMPORTANT MEDICAL DISCLAIMERS:
 - In emergencies, seek immediate medical attention
 `;
 
-    // Convert image buffer to base64
     const base64Image = imageBuffer.toString('base64');
     
-    // Prepare the image part for Gemini
     const imagePart = {
       inlineData: {
         data: base64Image,
@@ -95,10 +86,8 @@ IMPORTANT MEDICAL DISCLAIMERS:
       }
     };
 
-    // Prepare text part
     const textPart = { text: prompt };
 
-    // Generate content with image
     const result = await model.generateContent([textPart, imagePart]);
     const response = await result.response;
     const text = response.text();
@@ -108,7 +97,6 @@ IMPORTANT MEDICAL DISCLAIMERS:
   } catch (error) {
     console.error('Gemini Vision Error:', error);
     
-    // Special handling for vision model errors
     if (error.message.includes('SAFETY') || error.message.includes('blocked')) {
       return "I apologize, but I cannot analyze this image due to safety guidelines. For medical image analysis, please consult with a healthcare professional directly.";
     }
@@ -122,35 +110,91 @@ IMPORTANT MEDICAL DISCLAIMERS:
 };
 
 /**
- * Analyze conversation to determine if specialist recommendation is needed
+ * Extract health topics from conversation text
  */
-export const analyzeForSpecialistRecommendation = (userMessage, aiResponse) => {
-  const criticalKeywords = [
-    'emergency', 'urgent', 'severe', 'critical', 'intense pain',
-    'chest pain', 'difficulty breathing', 'bleeding', 'fainting',
-    'heart attack', 'stroke', 'allergic reaction', 'broken bone'
+export const extractHealthTopicsFromConversation = async (conversationText) => {
+  try {
+    const prompt = `
+Analyze this medical conversation and extract ALL health-related topics, symptoms, conditions, treatments, and health concerns mentioned.
+
+CONVERSATION:
+${conversationText}
+
+Respond with a JSON array of topics, each with:
+- topic: string (the health topic/symptom/condition in lowercase)
+- category: string (symptom, condition, treatment, prevention, wellness, nutrition, mental, other)
+- severity: string (critical, urgent, routine, informational)
+- confidence: number (0-1 how confident you are this is a health topic)
+
+Example response:
+[
+  {
+    "topic": "migraine headache",
+    "category": "symptom", 
+    "severity": "urgent",
+    "confidence": 0.9
+  }
+]
+`;
+
+    const result = await model.generateContent(prompt);
+    const response = await result.response;
+    const text = response.text();
+
+    const jsonMatch = text.match(/\[[\s\S]*\]/);
+    if (jsonMatch) {
+      const topics = JSON.parse(jsonMatch[0]);
+      
+      return topics
+        .filter(topic => topic.confidence > 0.6)
+        .map(topic => ({
+          topic: topic.topic.toLowerCase().trim(),
+          category: topic.category || 'symptom',
+          severity: topic.severity || 'routine',
+          confidence: topic.confidence
+        }));
+    }
+
+    return fallbackTopicExtraction(conversationText);
+
+  } catch (error) {
+    console.error('Topic extraction error:', error);
+    return fallbackTopicExtraction(conversationText);
+  }
+};
+
+const fallbackTopicExtraction = (conversationText) => {
+  const text = conversationText.toLowerCase();
+  const topics = [];
+  
+  const topicPatterns = [
+    { pattern: /headache|migraine|head pain/, topic: 'headache', category: 'symptom' },
+    { pattern: /stress|anxiety|worry|overwhelmed/, topic: 'stress', category: 'mental' },
+    { pattern: /sleep|insomnia|tired|fatigue/, topic: 'sleep issues', category: 'wellness' },
+    { pattern: /pain|hurt|ache|sore/, topic: 'pain', category: 'symptom' },
+    { pattern: /fever|temperature|hot|chills/, topic: 'fever', category: 'symptom' },
+    { pattern: /cough|coughing|throat/, topic: 'cough', category: 'symptom' },
+    { pattern: /stomach|nausea|digest|gut/, topic: 'digestion', category: 'condition' },
+    { pattern: /heart|chest|blood pressure/, topic: 'heart health', category: 'condition' },
+    { pattern: /skin|rash|acne/, topic: 'skin condition', category: 'condition' },
+    { pattern: /diet|nutrition|food|weight/, topic: 'nutrition', category: 'nutrition' },
+    { pattern: /exercise|workout|fitness/, topic: 'exercise', category: 'wellness' },
+    { pattern: /allergy|allergic|sneeze/, topic: 'allergy', category: 'condition' },
+    { pattern: /depression|mental|mood|sad/, topic: 'mental health', category: 'mental' }
   ];
-
-  const specialistKeywords = [
-    'specialist', 'doctor', 'physician', 'hospital', 'clinic',
-    'appointment', 'consult', 'referral', 'diagnose', 'prescription'
-  ];
-
-  const userMessageLower = userMessage.toLowerCase();
-  const aiResponseLower = aiResponse.toLowerCase();
-
-  // Check for critical issues that need immediate attention
-  const hasCriticalIssue = criticalKeywords.some(keyword => 
-    userMessageLower.includes(keyword) || aiResponseLower.includes(keyword)
-  );
-
-  // Check if specialist consultation is mentioned
-  const needsSpecialist = hasCriticalIssue || 
-    specialistKeywords.some(keyword => aiResponseLower.includes(keyword)) ||
-    userMessageLower.includes('see a doctor') ||
-    userMessageLower.includes('should i see');
-
-  return needsSpecialist;
+  
+  topicPatterns.forEach(({ pattern, topic, category }) => {
+    if (pattern.test(text)) {
+      topics.push({
+        topic: topic,
+        category: category,
+        severity: 'routine',
+        confidence: 0.8
+      });
+    }
+  });
+  
+  return topics;
 };
 
 /**
@@ -158,11 +202,12 @@ export const analyzeForSpecialistRecommendation = (userMessage, aiResponse) => {
  */
 export const analyzeConversationForSpecialty = async (conversationText) => {
   try {
-    const analysisPrompt = `
+    const prompt = `
 Analyze this medical conversation and determine:
 1. What medical specialty is most relevant?
 2. How urgent is the situation? (critical, urgent, routine)
 3. Key symptoms mentioned
+4. Health topics discussed
 
 CONVERSATION:
 ${conversationText}
@@ -172,21 +217,26 @@ Respond in JSON format:
   "recommendedSpecialty": "General Physician" or specific specialty,
   "severity": "critical" | "urgent" | "routine",
   "confidence": 0.85,
-  "keySymptoms": ["symptom1", "symptom2"]
+  "keySymptoms": ["symptom1", "symptom2"],
+  "healthTopics": ["topic1", "topic2"]
 }
 `;
 
-    const result = await model.generateContent(analysisPrompt);
+    const result = await model.generateContent(prompt);
     const response = await result.response;
     const text = response.text();
 
-    // Extract JSON from response
     const jsonMatch = text.match(/\{[\s\S]*\}/);
     if (jsonMatch) {
-      return JSON.parse(jsonMatch[0]);
+      const analysis = JSON.parse(jsonMatch[0]);
+      
+      if (!analysis.healthTopics) {
+        analysis.healthTopics = analysis.keySymptoms || [];
+      }
+      
+      return analysis;
     }
 
-    // Fallback analysis
     return fallbackConversationAnalysis(conversationText);
 
   } catch (error) {
@@ -195,41 +245,51 @@ Respond in JSON format:
   }
 };
 
-/**
- * Fallback analysis when AI fails
- */
 const fallbackConversationAnalysis = (conversationText) => {
   const text = conversationText.toLowerCase();
   
   let recommendedSpecialty = 'General Physician';
   let severity = 'routine';
   const keySymptoms = [];
+  const healthTopics = [];
 
-  // Determine specialty based on keywords
-  if (text.includes('heart') || text.includes('chest') || text.includes('blood pressure')) {
-    recommendedSpecialty = 'Cardiology';
-  } else if (text.includes('skin') || text.includes('rash') || text.includes('acne')) {
-    recommendedSpecialty = 'Dermatology';
-  } else if (text.includes('mental') || text.includes('anxiety') || text.includes('depression')) {
-    recommendedSpecialty = 'Psychiatry';
-  } else if (text.includes('stomach') || text.includes('digest') || text.includes('gut')) {
-    recommendedSpecialty = 'Gastroenterology';
-  } else if (text.includes('child') || text.includes('baby') || text.includes('pediatric')) {
-    recommendedSpecialty = 'Pediatrics';
-  }
+  const specialtyMap = [
+    { keywords: ['heart', 'chest', 'blood pressure'], specialty: 'Cardiology' },
+    { keywords: ['skin', 'rash', 'acne'], specialty: 'Dermatology' },
+    { keywords: ['mental', 'anxiety', 'depression'], specialty: 'Psychiatry' },
+    { keywords: ['stomach', 'digest', 'gut'], specialty: 'Gastroenterology' },
+    { keywords: ['child', 'baby', 'pediatric'], specialty: 'Pediatrics' },
+    { keywords: ['brain', 'nerve', 'neurology'], specialty: 'Neurology' },
+    { keywords: ['bone', 'joint', 'orthopedic'], specialty: 'Orthopedics' },
+    { keywords: ['eye', 'vision', 'ophthalmology'], specialty: 'Ophthalmology' },
+    { keywords: ['ear', 'nose', 'throat', 'ent'], specialty: 'ENT' },
+    { keywords: ['women', 'female', 'gynecology'], specialty: 'Gynecology' }
+  ];
 
-  // Determine severity
+  specialtyMap.forEach(({ keywords, specialty }) => {
+    if (keywords.some(keyword => text.includes(keyword))) {
+      recommendedSpecialty = specialty;
+    }
+  });
+
   if (text.includes('emergency') || text.includes('severe') || text.includes('critical')) {
     severity = 'critical';
   } else if (text.includes('urgent') || text.includes('pain') || text.includes('fever')) {
     severity = 'urgent';
   }
 
-  // Extract symptoms (simplified)
-  const symptomKeywords = ['headache', 'fever', 'pain', 'cough', 'rash', 'nausea', 'dizziness'];
-  symptomKeywords.forEach(symptom => {
+  const symptoms = ['headache', 'fever', 'pain', 'cough', 'rash', 'nausea', 'dizziness', 'fatigue'];
+  symptoms.forEach(symptom => {
     if (text.includes(symptom)) {
       keySymptoms.push(symptom);
+      healthTopics.push(symptom);
+    }
+  });
+
+  const topics = ['sleep', 'stress', 'diet', 'nutrition', 'exercise', 'fitness', 'allergy'];
+  topics.forEach(topic => {
+    if (text.includes(topic)) {
+      healthTopics.push(topic);
     }
   });
 
@@ -237,7 +297,34 @@ const fallbackConversationAnalysis = (conversationText) => {
     recommendedSpecialty,
     severity,
     confidence: 0.7,
-    keySymptoms
+    keySymptoms,
+    healthTopics: [...new Set(healthTopics)]
   };
 };
 
+/**
+ * Check if specialist recommendation is needed
+ */
+export const analyzeForSpecialistRecommendation = (userMessage, aiResponse) => {
+  const criticalKeywords = [
+    'emergency', 'urgent', 'severe', 'critical', 'intense pain',
+    'chest pain', 'difficulty breathing', 'bleeding', 'fainting',
+    'heart attack', 'stroke', 'allergic reaction', 'broken bone'
+  ];
+
+  const userMessageLower = userMessage.toLowerCase();
+  const aiResponseLower = aiResponse.toLowerCase();
+
+  const hasCriticalIssue = criticalKeywords.some(keyword => 
+    userMessageLower.includes(keyword) || aiResponseLower.includes(keyword)
+  );
+
+  const needsSpecialist = hasCriticalIssue || 
+    aiResponseLower.includes('specialist') ||
+    aiResponseLower.includes('doctor') ||
+    aiResponseLower.includes('hospital') ||
+    userMessageLower.includes('see a doctor') ||
+    userMessageLower.includes('should i see');
+
+  return needsSpecialist;
+};
