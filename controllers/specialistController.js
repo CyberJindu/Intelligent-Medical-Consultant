@@ -37,12 +37,13 @@ export const getRecommendedSpecialists = async (req, res) => {
     const cleanContext = conversationContext.trim();
     console.log('🧹 Cleaned context length:', cleanContext.length);
 
-    // Use updated matching function with verification priority
-    const specialists = await findMatchingSpecialists({ 
-      recommendedSpecialty: 'General Physician', // Default
-      severity: 'routine',
-      conversationContext: cleanContext
-    }, 5);
+    // First analyze the conversation to get specialty recommendation
+    console.log('🔬 Analyzing conversation for specialty...');
+    const analysis = await analyzeConversationForSpecialist(cleanContext);
+    console.log('✅ Analysis complete:', analysis);
+    
+    // Then find matching specialists based on the analysis
+    const specialists = await findMatchingSpecialists(analysis, 5);
 
     console.log('✅ Found specialists:', specialists.length);
 
@@ -241,4 +242,5 @@ export const getVerifiedSpecialists = async (req, res) => {
     });
   }
 };
+
 
