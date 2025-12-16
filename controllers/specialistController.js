@@ -6,19 +6,60 @@ export const getRecommendedSpecialists = async (req, res) => {
   try {
     const { conversationContext } = req.body;
 
-    if (!conversationContext) {
+    console.log('🩺 Specialist recommendation request received');
+    console.log('📝 Conversation context type:', typeof conversationContext);
+    console.log('📏 Context length:', conversationContext?.length || 0);
+    console.log('🔍 First 200 chars:', conversationContext?.substring(0, 200));
+
+    // FIXED: STRONGER VALIDATION
+    if (!conversationContext || 
+        typeof conversationContext !== 'string' || 
+        conversationContext.trim().length < 10) {
+      console.error('❌ Invalid conversation context:', {
+        exists: !!conversationContext,
+        type: typeof conversationContext,
+        length: conversationContext?.length || 0,
+        trimmedLength: conversationContext?.trim().length || 0
+      });
+      
       return res.status(400).json({
         success: false,
-        message: 'Conversation context is required'
+        message: 'Valid conversation context (minimum 10 characters) is required',
+        debug: {
+          received: conversationContext,
+          type: typeof conversationContext,
+          length: conversationContext?.length || 0
+        }
       });
     }
+
+    // Clean the context
+    const cleanContext = conversationContext.trim();
+    console.log('🧹 Cleaned context length:', cleanContext.length);
 
     // Use updated matching function with verification priority
     const specialists = await findMatchingSpecialists({ 
       recommendedSpecialty: 'General Physician', // Default
       severity: 'routine',
-      conversationContext 
+      conversationContext: cleanContext
     }, 5);
+
+    console.log('✅ Found specialists:', specialists.length);
+
+    // Handle empty specialists case
+    if (specialists.length === 0) {
+      console.log('ℹ️ No specialists found, returning empty array');
+      return res.status(200).json({
+        success: true,
+        data: {
+          specialists: [],
+          message: "No matching specialists found in the database",
+          verificationImpact: false,
+          topSpecialistVerified: false,
+          verifiedCount: 0
+        }
+      });
+    }
 
     // Format response with verification highlights
     const formattedSpecialists = specialists.map(specialist => ({
@@ -47,19 +88,24 @@ export const getRecommendedSpecialists = async (req, res) => {
         specialists: formattedSpecialists,
         verificationImpact: true, // Indicates verification affected ranking
         topSpecialistVerified: formattedSpecialists[0]?.isVerified || false,
-        verifiedCount: formattedSpecialists.filter(s => s.isVerified).length
+        verifiedCount: formattedSpecialists.filter(s => s.isVerified).length,
+        contextLength: cleanContext.length
       }
     });
 
   } catch (error) {
-    console.error('Specialist recommendation error:', error);
+    console.error('❌ Specialist recommendation error:', error);
+    console.error('🔧 Error stack:', error.stack);
+    
     res.status(500).json({
       success: false,
       message: 'Failed to get specialist recommendations',
-      error: error.message
+      error: error.message,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
     });
   }
 };
+
 
 // Get all specialists with verification filtering
 export const getAllSpecialists = async (req, res) => {
@@ -195,3 +241,4 @@ export const getVerifiedSpecialists = async (req, res) => {
     });
   }
 };
+
