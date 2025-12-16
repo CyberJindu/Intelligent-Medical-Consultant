@@ -6,17 +6,36 @@ import { analyzeConversationForSpecialty } from './geminiHelper.js';
  */
 export const analyzeConversationForSpecialist = async (conversationContext) => {
   try {
+    console.log('🔍 analyzeConversationForSpecialist called with context length:', conversationContext?.length || 0);
+    
+    if (!conversationContext || conversationContext.trim().length < 10) {
+      console.warn('⚠️ Conversation context too short for analysis');
+      return {
+        recommendedSpecialty: 'General Physician',
+        severity: 'routine',
+        confidence: 0.3,
+        keySymptoms: [],
+        healthTopics: []
+      };
+    }
+    
     const analysis = await analyzeConversationForSpecialty(conversationContext);
+    console.log('✅ Conversation analysis result:', {
+      recommendedSpecialty: analysis.recommendedSpecialty,
+      severity: analysis.severity,
+      healthTopics: analysis.healthTopics?.length || 0
+    });
     return analysis;
 
   } catch (error) {
-    console.error('Specialist matching analysis error:', error);
+    console.error('❌ Specialist matching analysis error:', error);
     
     return {
       recommendedSpecialty: 'General Physician',
       severity: 'routine',
       confidence: 0.6,
-      keySymptoms: []
+      keySymptoms: [],
+      healthTopics: []
     };
   }
 };
@@ -26,6 +45,12 @@ export const analyzeConversationForSpecialist = async (conversationContext) => {
  */
 export const findMatchingSpecialists = async (analysis, limit = 5) => {
   try {
+    console.log('🔎 findMatchingSpecialists called with:', {
+      recommendedSpecialty: analysis.recommendedSpecialty,
+      severity: analysis.severity,
+      healthTopics: analysis.healthTopics?.length || 0
+    });
+    
     const { recommendedSpecialty, severity, healthTopics = [] } = analysis;
     
     let query = { 
@@ -43,12 +68,17 @@ export const findMatchingSpecialists = async (analysis, limit = 5) => {
       query.specialty = { $regex: 'general|physician|family', $options: 'i' };
     }
 
+    console.log('📋 Database query:', query);
+    
     // Get more specialists to sort locally
     const specialists = await Specialist.find(query)
       .select('name specialty subSpecialty bio rating experience verificationStatus verificationLevel verificationDate responseTime languages consultationTypes')
       .limit(limit * 3);
 
+    console.log('👨‍⚕️ Found specialists in DB:', specialists.length);
+
     if (specialists.length === 0) {
+      console.log('ℹ️ No specialists found in database');
       return [];
     }
 
@@ -69,11 +99,19 @@ export const findMatchingSpecialists = async (analysis, limit = 5) => {
     // Sort by total score (highest first)
     scoredSpecialists.sort((a, b) => b.totalScore - a.totalScore);
     
+    console.log('🏆 Top specialist scores:', scoredSpecialists.slice(0, 3).map(s => ({
+      name: s.name,
+      specialty: s.specialty,
+      matchScore: s.matchScore,
+      verificationBoost: s.verificationBoost,
+      totalScore: s.totalScore
+    })));
+    
     // Return top N
     return scoredSpecialists.slice(0, limit);
 
   } catch (error) {
-    console.error('Find specialists error:', error);
+    console.error('❌ Find specialists error:', error);
     return [];
   }
 };
