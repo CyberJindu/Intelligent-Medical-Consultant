@@ -152,10 +152,10 @@ export const validateSpecialistRecommendation = (req, res, next) => {
       });
     }
 
-    if (conversationText.length > 10000) {
+    if (conversationText.length > 50000) {
       return res.status(400).json({
         success: false,
-        message: 'Conversation context too long (max 10000 characters)'
+        message: 'Conversation context too long (max 50000 characters)'
       });
     }
 
@@ -401,3 +401,4 @@ export const notFoundHandler = (req, res) => {
     message: `Route not found: ${req.method} ${req.originalUrl}`
   });
 };
+
