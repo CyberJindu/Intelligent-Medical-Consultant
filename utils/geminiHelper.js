@@ -159,6 +159,13 @@ Example response:
 
   } catch (error) {
     console.error('Topic extraction error:', error);
+
+    // ✅ ADD: If Gemini is overloaded, return empty array instead of trying fallback
+    if (error.message.includes('503') || error.message.includes('overloaded')) {
+      console.log('⚠️ Gemini overloaded, skipping topic extraction');
+      return []; // Return empty instead of calling fallback
+    }
+    
     return fallbackTopicExtraction(conversationText);
   }
 };
@@ -328,3 +335,4 @@ export const analyzeForSpecialistRecommendation = (userMessage, aiResponse) => {
 
   return needsSpecialist;
 };
+
