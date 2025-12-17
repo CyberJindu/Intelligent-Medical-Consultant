@@ -51,7 +51,7 @@ const userSchema = new mongoose.Schema({
     },
     category: {
       type: String,
-      enum: ['symptom', 'condition', 'treatment', 'prevention', 'wellness', 'nutrition', 'other'],
+      enum: ['symptom', 'condition', 'treatment', 'prevention', 'wellness', 'nutrition', 'mental', 'other'],
       default: 'symptom'
     },
     severity: {
@@ -245,3 +245,4 @@ userSchema.set('toJSON', {
 });
 
 export default mongoose.model('User', userSchema);
+
