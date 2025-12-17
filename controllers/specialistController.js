@@ -1,5 +1,5 @@
 import Specialist from '../models/Specialist.js';
-import { findMatchingSpecialists, getVerifiedSpecialistsBySpecialty } from '../utils/specialistMatching.js';
+import { analyzeConversationForSpecialist, findMatchingSpecialists, getVerifiedSpecialistsBySpecialty } from '../utils/specialistMatching.js';
 
 // Get recommended specialists based on conversation WITH VERIFICATION PRIORITY
 export const getRecommendedSpecialists = async (req, res) => {
@@ -242,5 +242,6 @@ export const getVerifiedSpecialists = async (req, res) => {
     });
   }
 };
+
 
 
