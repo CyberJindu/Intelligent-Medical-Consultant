@@ -4,7 +4,8 @@ import {
   getContentHistory,
   approveAndSaveContent,
   updateContent,
-  deleteContent
+  deleteContent,
+  getContentStats
 } from '../controllers/contentController.js';
 import { specialistAuthMiddleware } from '../middleware/specialistAuth.js';
 
@@ -15,9 +16,11 @@ router.use(specialistAuthMiddleware);
 
 // Content generation routes
 router.post('/generate', generateContent);
+router.post('/approve', approveAndSaveContent);
 router.get('/history', getContentHistory);
 router.put('/:id', updateContent);
 router.delete('/:id', deleteContent);
-router.post('/approve', approveAndSaveContent);
+router.get('/stats', getContentStats);
+
 
 export default router;
