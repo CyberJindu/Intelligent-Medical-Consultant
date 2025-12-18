@@ -1,14 +1,19 @@
 import multer from 'multer';
 import Chat from '../models/Chat.js';
 import User from '../models/User.js';
-import { generateAIResponse, analyzeForSpecialistRecommendation, extractHealthTopicsFromConversation } from '../utils/geminiHelper.js';
+import { 
+  generateAIResponse, 
+  analyzeForSpecialistRecommendation, 
+  extractHealthTopicsFromConversation,
+  analyzeHealthStateAndSpecialty // ⚡ NEW
+} from '../utils/geminiHelper.js';
 
 // Configure multer for image upload
-const storage = multer.memoryStorage(); // Store in memory for processing
+const storage = multer.memoryStorage();
 const upload = multer({
   storage,
   limits: {
-    fileSize: 5 * 1024 * 1024, // 5MB limit
+    fileSize: 5 * 1024 * 1024,
   },
   fileFilter: (req, file, cb) => {
     if (file.mimetype.startsWith('image/')) {
@@ -31,7 +36,6 @@ const extractAndUpdateTopics = async (userId, conversationText) => {
       return [];
     }
 
-    // Extract topics using Gemini
     const extractedTopics = await extractHealthTopicsFromConversation(conversationText);
     console.log('✅ Extracted topics:', extractedTopics.length);
     
@@ -39,7 +43,6 @@ const extractAndUpdateTopics = async (userId, conversationText) => {
       return [];
     }
 
-    // Update user's conversation topics in database
     const user = await User.findById(userId);
     if (!user) {
       console.error('❌ User not found for topic extraction:', userId);
@@ -52,10 +55,8 @@ const extractAndUpdateTopics = async (userId, conversationText) => {
       severity: topic.severity
     }));
     
-    // Update conversation topics
     await user.updateConversationTopics(formattedTopics, conversationText.substring(0, 100));
     
-    // Also update health interests based on topics
     extractedTopics.forEach(topic => {
       const existingInterest = user.healthInterests.find(
         i => i.topic.toLowerCase() === topic.topic.toLowerCase()
@@ -85,6 +86,47 @@ const extractAndUpdateTopics = async (userId, conversationText) => {
   }
 };
 
+// ⚡ NEW: Real-time health state analysis
+const analyzeConversationHealthState = async (conversationText, chat, userId) => {
+  try {
+    console.log('⚡ Analyzing health state in real-time...');
+    
+    const healthAnalysis = await analyzeHealthStateAndSpecialty(conversationText);
+    console.log('✅ Health analysis result:', healthAnalysis);
+    
+    // Update chat with health analysis
+    await chat.updateHealthState(
+      healthAnalysis.healthState,
+      healthAnalysis.severityScore,
+      healthAnalysis.recommendedSpecialty
+    );
+    
+    // Update key symptoms
+    chat.keySymptoms = [...new Set([...chat.keySymptoms || [], ...healthAnalysis.keySymptoms])];
+    await chat.save();
+    
+    return healthAnalysis;
+    
+  } catch (error) {
+    console.error('❌ Health state analysis error:', error);
+    
+    // Fallback to simple keyword detection
+    const legacyNeedsSpecialist = analyzeForSpecialistRecommendation(
+      conversationText.split('\n').pop() || '',
+      ''
+    );
+    
+    return {
+      healthState: legacyNeedsSpecialist ? 'urgent' : 'routine',
+      severityScore: legacyNeedsSpecialist ? 60 : 20,
+      recommendedSpecialty: 'General Physician',
+      specialistAdvised: legacyNeedsSpecialist,
+      keySymptoms: [],
+      confidence: 0.5
+    };
+  }
+};
+
 // Send message to AI and get response
 export const sendMessage = async (req, res) => {
   try {
@@ -101,7 +143,6 @@ export const sendMessage = async (req, res) => {
     let chat;
     
     if (conversationId) {
-      // Continue existing conversation
       chat = await Chat.findOne({ _id: conversationId, userId });
       if (!chat) {
         return res.status(404).json({
@@ -110,7 +151,6 @@ export const sendMessage = async (req, res) => {
         });
       }
     } else {
-      // Start new conversation
       chat = new Chat({
         userId,
         title: message.substring(0, 50) + (message.length > 50 ? '...' : ''),
@@ -133,6 +173,9 @@ export const sendMessage = async (req, res) => {
     const conversationText = [...chat.messages.map(m => m.text), message, aiResponse].join(' ');
     const extractedTopics = await extractAndUpdateTopics(userId, conversationText);
     
+    // ⚡ NEW: Real-time health state analysis
+    const healthAnalysis = await analyzeConversationHealthState(conversationText, chat, userId);
+    
     // Add AI message
     const aiMessage = {
       text: aiResponse,
@@ -149,8 +192,8 @@ export const sendMessage = async (req, res) => {
     chat.updatedAt = new Date();
     await chat.save();
 
-    // Check if specialist is needed
-    const needsSpecialist = analyzeForSpecialistRecommendation(message, aiResponse);
+    // Legacy check for backward compatibility
+    const legacyNeedsSpecialist = analyzeForSpecialistRecommendation(message, aiResponse);
 
     res.status(200).json({
       success: true,
@@ -164,7 +207,17 @@ export const sendMessage = async (req, res) => {
           severity: t.severity,
           confidence: t.confidence
         })),
-        needsSpecialist,
+        // ⚡ NEW: Health analysis data for proactive recommendations
+        healthAnalysis: {
+          healthState: healthAnalysis.healthState,
+          severityScore: healthAnalysis.severityScore,
+          recommendedSpecialty: healthAnalysis.recommendedSpecialty,
+          specialistAdvised: healthAnalysis.specialistAdvised,
+          keySymptoms: healthAnalysis.keySymptoms,
+          confidence: healthAnalysis.confidence
+        },
+        // Legacy field for backward compatibility
+        needsSpecialist: legacyNeedsSpecialist || healthAnalysis.specialistAdvised,
         topicCount: extractedTopics.length
       }
     });
@@ -183,7 +236,6 @@ export const sendMessage = async (req, res) => {
 export const sendMessageWithImage = async (req, res) => {
   try {
     console.log('📸 Image upload attempt received');
-    console.log('📋 Request body keys:', Object.keys(req.body || {}));
     
     const uploadMiddleware = upload.single('image');
     
@@ -197,20 +249,10 @@ export const sendMessageWithImage = async (req, res) => {
       }
 
       console.log('✅ File uploaded successfully');
-      console.log('📁 File info:', {
-        mimetype: req.file?.mimetype,
-        size: req.file?.size,
-        originalname: req.file?.originalname,
-        bufferLength: req.file?.buffer?.length
-      });
 
       const { message, conversationId } = req.body;
       const imageFile = req.file;
       const userId = req.userId;
-
-      console.log('👤 User ID:', userId);
-      console.log('💬 Message:', message);
-      console.log('🆔 Conversation ID:', conversationId);
 
       if (!imageFile) {
         console.error('❌ No image file received');
@@ -223,7 +265,6 @@ export const sendMessageWithImage = async (req, res) => {
       let chat;
       
       if (conversationId) {
-        // Continue existing conversation
         chat = await Chat.findOne({ _id: conversationId, userId });
         if (!chat) {
           console.error('❌ Conversation not found:', conversationId);
@@ -234,7 +275,6 @@ export const sendMessageWithImage = async (req, res) => {
         }
         console.log('🔄 Continuing existing conversation');
       } else {
-        // Start new conversation
         const title = message 
           ? message.substring(0, 50) + (message.length > 50 ? '...' : '')
           : 'Image consultation';
@@ -246,13 +286,11 @@ export const sendMessageWithImage = async (req, res) => {
         console.log('🆕 Starting new conversation');
       }
 
-      // Prepare image data for AI
       const imageData = {
         imageBuffer: imageFile.buffer,
         imageMimeType: imageFile.mimetype
       };
 
-      // Add user message with image reference
       const userMessage = {
         text: message || 'Image uploaded',
         isUser: true,
@@ -267,24 +305,20 @@ export const sendMessageWithImage = async (req, res) => {
       chat.messages.push(userMessage);
 
       try {
-        // Generate AI response with image analysis
         console.log('🤖 Sending image to Gemini for analysis...');
-        console.log('📊 Image size:', imageFile.buffer.length, 'bytes');
-        console.log('📄 MIME type:', imageFile.mimetype);
         
         const aiResponse = await generateAIResponse(message || '', chat.messages, imageData);
         console.log('✅ Gemini response received');
-        console.log('📝 Response preview:', aiResponse.substring(0, 200).replace(/\n/g, ' '));
         
-        // Extract topics from this conversation (including image analysis)
         const conversationText = [...chat.messages.map(m => m.text), message || '', aiResponse].join(' ');
         const extractedTopics = await extractAndUpdateTopics(userId, conversationText);
         
-        // Check if Specialist is needed
-        const needsSpecialist = analyzeForSpecialistRecommendation(message || '', aiResponse);
-        console.log('🎯 Specialist needed?', needsSpecialist);
+        // ⚡ NEW: Health analysis for image conversations too
+        const healthAnalysis = await analyzeConversationHealthState(conversationText, chat, userId);
         
-        // Add AI message
+        const legacyNeedsSpecialist = analyzeForSpecialistRecommendation(message || '', aiResponse);
+        console.log('🎯 Specialist needed?', legacyNeedsSpecialist);
+        
         const aiMessage = {
           text: aiResponse,
           isUser: false,
@@ -293,7 +327,6 @@ export const sendMessageWithImage = async (req, res) => {
         };
         chat.messages.push(aiMessage);
 
-        // Update conversation title
         if (chat.messages.length === 2) {
           chat.title = message 
             ? message.substring(0, 50) + (message.length > 50 ? '...' : '')
@@ -304,7 +337,6 @@ export const sendMessageWithImage = async (req, res) => {
         await chat.save();
         console.log('💾 Chat saved successfully');
 
-        // Generate base64 preview for frontend
         const base64Preview = imageFile.buffer.toString('base64').substring(0, 100);
         
         res.status(200).json({
@@ -322,10 +354,20 @@ export const sendMessageWithImage = async (req, res) => {
               severity: t.severity,
               confidence: t.confidence
             })),
-            needsSpecialist: needsSpecialist || 
+            // ⚡ NEW: Health analysis for image chats
+            healthAnalysis: {
+              healthState: healthAnalysis.healthState,
+              severityScore: healthAnalysis.severityScore,
+              recommendedSpecialty: healthAnalysis.recommendedSpecialty,
+              specialistAdvised: healthAnalysis.specialistAdvised,
+              keySymptoms: healthAnalysis.keySymptoms,
+              confidence: healthAnalysis.confidence
+            },
+            needsSpecialist: legacyNeedsSpecialist || 
               aiMessage.text.toLowerCase().includes('specialist') || 
               aiMessage.text.toLowerCase().includes('doctor') ||
-              aiMessage.text.toLowerCase().includes('emergency'),
+              aiMessage.text.toLowerCase().includes('emergency') ||
+              healthAnalysis.specialistAdvised,
             topicCount: extractedTopics.length
           }
         });
@@ -334,9 +376,7 @@ export const sendMessageWithImage = async (req, res) => {
 
       } catch (geminiError) {
         console.error('❌ Gemini API error:', geminiError.message);
-        console.error('🔧 Error stack:', geminiError.stack);
         
-        // Add error message to chat
         const errorMessage = {
           text: "I apologize, but I'm having trouble analyzing this image. Please try again or describe the issue in text.",
           isUser: false,
@@ -356,6 +396,14 @@ export const sendMessageWithImage = async (req, res) => {
             conversationId: chat?._id || null,
             aiMessage: errorMessage,
             extractedTopics: [],
+            healthAnalysis: {
+              healthState: 'routine',
+              severityScore: 20,
+              recommendedSpecialty: 'General Physician',
+              specialistAdvised: false,
+              keySymptoms: [],
+              confidence: 0.5
+            },
             needsSpecialist: false
           },
           message: 'AI analysis failed'
@@ -365,7 +413,6 @@ export const sendMessageWithImage = async (req, res) => {
 
   } catch (error) {
     console.error('💥 Image chat error:', error);
-    console.error('🔧 Error stack:', error.stack);
     
     res.status(500).json({
       success: false,
@@ -380,7 +427,7 @@ export const getConversations = async (req, res) => {
   try {
     const userId = req.userId;
     const conversations = await Chat.find({ userId })
-      .select('title messages updatedAt')
+      .select('title messages healthState severityScore specialistAdvised updatedAt')
       .sort({ updatedAt: -1 })
       .limit(50);
 
@@ -389,6 +436,9 @@ export const getConversations = async (req, res) => {
       title: conv.title,
       preview: conv.messages.length > 0 ? conv.messages[0].text : 'No messages',
       messageCount: conv.messages.length,
+      healthState: conv.healthState,
+      severityScore: conv.severityScore,
+      specialistAdvised: conv.specialistAdvised,
       lastUpdated: conv.updatedAt
     }));
 
@@ -476,7 +526,6 @@ export const extractTopicsFromConversation = async (req, res) => {
     const userId = req.userId;
     
     console.log('🧠 Topic extraction API called for user:', userId);
-    console.log('📝 Conversation text length:', conversationText?.length || 0);
 
     if (!conversationText?.trim()) {
       return res.status(400).json({
@@ -520,7 +569,6 @@ export const updateUserHealthInterests = async (req, res) => {
     const userId = req.userId;
 
     console.log('🔄 Health interests update API called for user:', userId);
-    console.log('📋 Topics to update:', topics?.length || 0);
 
     if (!topics || !Array.isArray(topics)) {
       return res.status(400).json({
@@ -538,7 +586,6 @@ export const updateUserHealthInterests = async (req, res) => {
       });
     }
 
-    // Update health interests based on topics
     const updatedTopics = [];
     
     topics.forEach(topic => {
@@ -549,7 +596,6 @@ export const updateUserHealthInterests = async (req, res) => {
       );
       
       if (existingInterest) {
-        // Boost relevance score for existing interest
         existingInterest.relevanceScore = Math.min(100, existingInterest.relevanceScore + 15);
         existingInterest.lastEngaged = new Date();
         updatedTopics.push({
@@ -558,7 +604,6 @@ export const updateUserHealthInterests = async (req, res) => {
           action: 'updated'
         });
       } else {
-        // Add new interest
         user.healthInterests.push({
           topic: topic.topic,
           relevanceScore: 70,
@@ -576,7 +621,6 @@ export const updateUserHealthInterests = async (req, res) => {
     await user.save();
     console.log('✅ Health interests updated, total interests:', user.healthInterests.length);
 
-    // Get top 5 interests after update
     const topInterests = user.getTopHealthInterests(5);
 
     res.status(200).json({
