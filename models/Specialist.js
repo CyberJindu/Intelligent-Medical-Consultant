@@ -130,10 +130,6 @@ const specialistSchema = new mongoose.Schema({
   licenseExpiry: {
     type: Date
   },
-  yearsOfExperience: {
-    type: Number,
-    min: 0
-  },
   isAvailableForConsultation: {
     type: Boolean,
     default: true
@@ -186,5 +182,6 @@ specialistSchema.set('toJSON', {
 
 
 export default mongoose.model('Specialist', specialistSchema);
+
 
 
