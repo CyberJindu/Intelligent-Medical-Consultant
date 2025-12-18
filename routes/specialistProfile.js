@@ -1,7 +1,8 @@
 import express from 'express';
 import { 
   updateSpecialistProfile, 
-  deleteProfilePicture 
+  deleteProfilePicture,
+  getVerificationStatus
 } from '../controllers/specialistProfileController.js';
 import { specialistAuthMiddleware } from '../middleware/specialistAuth.js';
 
@@ -15,5 +16,7 @@ router.put('/profile', updateSpecialistProfile);
 
 // Delete profile picture
 router.delete('/profile/picture', deleteProfilePicture);
+
+router.get('/verification', getVerificationStatus);
 
 export default router;
