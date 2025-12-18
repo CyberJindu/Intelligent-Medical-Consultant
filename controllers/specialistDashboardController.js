@@ -12,7 +12,7 @@ export const getPerformanceStats = async (req, res) => {
 
     // Get specialist basic info
     const specialist = await Specialist.findById(specialistId)
-      .select('name specialty rating reviewCount verificationStatus');
+      .select('name specialty rating reviewCount verificationStatus experience');
 
     if (!specialist) {
       return res.status(404).json({
