@@ -121,3 +121,39 @@ export const deleteProfilePicture = async (req, res) => {
     });
   }
 };
+
+// Get verification status
+export const getVerificationStatus = async (req, res) => {
+  try {
+    const specialistId = req.specialistId;
+    
+    const specialist = await Specialist.findById(specialistId)
+      .select('verificationStatus name specialty verificationDocuments');
+
+    if (!specialist) {
+      return res.status(404).json({
+        success: false,
+        message: 'Specialist not found'
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      data: {
+        verificationStatus: specialist.verificationStatus,
+        name: specialist.name,
+        specialty: specialist.specialty,
+        hasDocuments: specialist.verificationDocuments?.length > 0,
+        documentCount: specialist.verificationDocuments?.length || 0
+      }
+    });
+
+  } catch (error) {
+    console.error('Get verification status error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch verification status',
+      error: error.message
+    });
+  }
+};
