@@ -282,3 +282,59 @@ export const deleteContent = async (req, res) => {
     });
   }
 };
+
+/**
+ * Get content statistics for specialist
+ */
+export const getContentStats = async (req, res) => {
+  try {
+    const specialistId = req.specialistId;
+
+    const stats = await GeneratedContent.aggregate([
+      {
+        $match: {
+          specialistId: new mongoose.Types.ObjectId(specialistId)
+        }
+      },
+      {
+        $group: {
+          _id: "$contentType",
+          count: { $sum: 1 },
+          published: {
+            $sum: { $cond: [{ $eq: ["$isPublished", true] }, 1, 0] }
+          },
+          avgWordCount: { $avg: "$wordCount" }
+        }
+      },
+      {
+        $sort: { count: -1 }
+      }
+    ]);
+
+    // Calculate totals
+    const totalContent = await GeneratedContent.countDocuments({ specialistId });
+    const publishedContent = await GeneratedContent.countDocuments({ 
+      specialistId, 
+      isPublished: true 
+    });
+
+    res.status(200).json({
+      success: true,
+      data: {
+        totalContent,
+        publishedContent,
+        draftContent: totalContent - publishedContent,
+        byType: stats,
+        publicationRate: totalContent > 0 ? ((publishedContent / totalContent) * 100).toFixed(1) : 0
+      }
+    });
+
+  } catch (error) {
+    console.error('Get content stats error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch content statistics',
+      error: error.message
+    });
+  }
+};
