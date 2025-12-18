@@ -57,7 +57,29 @@ const generatedContentSchema = new mongoose.Schema({
   }
 }, {
   timestamps: true
-});
+},
+                                                  
+// Real engagement tracking
+views: {
+  type: Number,
+  default: 0
+},
+likes: {
+  type: Number,
+  default: 0
+},
+shares: {
+  type: Number,
+  default: 0
+},
+comments: {
+  type: Number,
+  default: 0
+},
+uniqueViewers: [{
+  type: mongoose.Schema.Types.ObjectId,
+  ref: 'User'
+}]);
 
 // Index for faster queries
 generatedContentSchema.index({ specialistId: 1, generatedAt: -1 });
