@@ -109,6 +109,151 @@ IMPORTANT MEDICAL DISCLAIMERS:
   }
 };
 
+// ⚡ NEW: Real-time health state and specialty analysis
+export const analyzeHealthStateAndSpecialty = async (conversationText) => {
+  try {
+    const prompt = `
+Analyze this medical conversation in real-time and determine:
+
+1. HEALTH STATE ASSESSMENT (critical/urgent/routine/informational):
+   - "critical": Life-threatening, requires immediate emergency care
+   - "urgent": Needs professional attention within 24 hours
+   - "routine": Can wait for regular appointment
+   - "informational": General health questions only
+
+2. SEVERITY SCORE (0-100):
+   - 80-100: Critical emergency
+   - 60-79: Urgent attention needed
+   - 30-59: Routine consultation advised
+   - 0-29: Informational only
+
+3. SPECIALTY NEEDED:
+   - Most relevant medical specialty (e.g., "Cardiology", "Dermatology", "General Physician")
+
+4. SPECIALIST ADVISED:
+   - Should the user consult a healthcare professional? (true/false)
+
+5. KEY SYMPTOMS:
+   - Array of main symptoms mentioned
+
+Respond in STRICT JSON format only:
+{
+  "healthState": "critical" | "urgent" | "routine" | "informational",
+  "severityScore": number (0-100),
+  "recommendedSpecialty": "string",
+  "specialistAdvised": boolean,
+  "keySymptoms": ["string", "string"],
+  "confidence": number (0-1)
+}
+
+CONVERSATION:
+${conversationText.substring(0, 3000)} // Limit to 3000 chars for token efficiency
+`;
+
+    const result = await model.generateContent(prompt);
+    const response = await result.response;
+    const text = response.text();
+
+    // Extract JSON from response
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      const analysis = JSON.parse(jsonMatch[0]);
+      
+      // Validate and normalize response
+      return {
+        healthState: ['critical', 'urgent', 'routine', 'informational'].includes(analysis.healthState) 
+          ? analysis.healthState 
+          : 'routine',
+        severityScore: Math.min(100, Math.max(0, analysis.severityScore || 0)),
+        recommendedSpecialty: analysis.recommendedSpecialty || 'General Physician',
+        specialistAdvised: Boolean(analysis.specialistAdvised),
+        keySymptoms: Array.isArray(analysis.keySymptoms) ? analysis.keySymptoms : [],
+        confidence: Math.min(1, Math.max(0, analysis.confidence || 0.7))
+      };
+    }
+
+    return fallbackHealthAnalysis(conversationText);
+
+  } catch (error) {
+    console.error('Health state analysis error:', error);
+    
+    // Don't break chat if analysis fails
+    if (error.message.includes('503') || error.message.includes('overloaded')) {
+      console.log('⚠️ Gemini overloaded, using fallback analysis');
+    }
+    
+    return fallbackHealthAnalysis(conversationText);
+  }
+};
+
+const fallbackHealthAnalysis = (conversationText) => {
+  const text = conversationText.toLowerCase();
+  
+  // Default analysis
+  let healthState = 'routine';
+  let severityScore = 20;
+  let specialistAdvised = false;
+  const keySymptoms = [];
+  
+  // Critical patterns
+  const criticalPatterns = [
+    'chest pain', 'heart attack', 'stroke', 'difficulty breathing', 
+    'severe bleeding', 'unconscious', 'choking', 'suicidal', 'overdose'
+  ];
+  
+  // Urgent patterns
+  const urgentPatterns = [
+    'fever over 103', 'severe pain', 'broken bone', 'deep cut', 
+    'burn', 'allergic reaction', 'poisoning', 'head injury'
+  ];
+  
+  if (criticalPatterns.some(pattern => text.includes(pattern))) {
+    healthState = 'critical';
+    severityScore = 90;
+    specialistAdvised = true;
+  } else if (urgentPatterns.some(pattern => text.includes(pattern))) {
+    healthState = 'urgent';
+    severityScore = 65;
+    specialistAdvised = true;
+  }
+  
+  // Extract symptoms
+  const symptomPatterns = [
+    { pattern: /headache|migraine/, symptom: 'headache' },
+    { pattern: /fever|temperature/, symptom: 'fever' },
+    { pattern: /cough/, symptom: 'cough' },
+    { pattern: /pain|hurt|ache/, symptom: 'pain' },
+    { pattern: /nausea|vomit/, symptom: 'nausea' },
+    { pattern: /dizziness/, symptom: 'dizziness' },
+    { pattern: /rash/, symptom: 'rash' }
+  ];
+  
+  symptomPatterns.forEach(({ pattern, symptom }) => {
+    if (pattern.test(text)) {
+      keySymptoms.push(symptom);
+    }
+  });
+  
+  // Determine specialty based on symptoms
+  let recommendedSpecialty = 'General Physician';
+  if (text.includes('chest') || text.includes('heart')) {
+    recommendedSpecialty = 'Cardiology';
+  } else if (text.includes('skin') || text.includes('rash')) {
+    recommendedSpecialty = 'Dermatology';
+  } else if (text.includes('mental') || text.includes('depression')) {
+    recommendedSpecialty = 'Psychiatry';
+  }
+  
+  return {
+    healthState,
+    severityScore,
+    recommendedSpecialty,
+    specialistAdvised,
+    keySymptoms: [...new Set(keySymptoms)],
+    confidence: 0.6
+  };
+};
+
 /**
  * Extract health topics from conversation text
  */
@@ -310,7 +455,7 @@ const fallbackConversationAnalysis = (conversationText) => {
 };
 
 /**
- * Check if specialist recommendation is needed
+ * Check if specialist recommendation is needed (Legacy - kept for backward compatibility)
  */
 export const analyzeForSpecialistRecommendation = (userMessage, aiResponse) => {
   const criticalKeywords = [
@@ -335,4 +480,3 @@ export const analyzeForSpecialistRecommendation = (userMessage, aiResponse) => {
 
   return needsSpecialist;
 };
-
