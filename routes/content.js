@@ -5,7 +5,8 @@ import {
   approveAndSaveContent,
   updateContent,
   deleteContent,
-  getContentStats
+  getContentStats,
+  migrateExistingContent
 } from '../controllers/contentController.js';
 import { specialistAuthMiddleware } from '../middleware/specialistAuth.js';
 
@@ -22,5 +23,7 @@ router.put('/:id', updateContent);
 router.delete('/:id', deleteContent);
 router.get('/stats', getContentStats);
 
+// NEW: Migration endpoint
+router.post('/migrate', migrateExistingContent);
 
 export default router;
