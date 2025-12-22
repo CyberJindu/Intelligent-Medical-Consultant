@@ -126,6 +126,10 @@ export const approveAndSaveContent = async (req, res) => {
             });
         }
 
+        console.log('📝 Saving content for specialist:', specialistId);
+        console.log('📝 Content title:', title);
+        console.log('📝 Word count:', content.length);
+
         // Create a new instance of the model with the reviewed/edited data
         const newContent = new GeneratedContent({
             specialistId,
@@ -140,9 +144,12 @@ export const approveAndSaveContent = async (req, res) => {
             isPublished: true,
             generatedAt: new Date()
         });
+            
+        console.log('📝 New content object:', newContent);
 
         // Save the approved content to the database
         await newContent.save();
+        console.log('✅ Content saved with ID:', newContent._id);
 
         res.status(201).json({
             success: true,
