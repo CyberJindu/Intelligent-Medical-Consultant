@@ -218,6 +218,58 @@ export const saveArticle = async (req, res) => {
   }
 };
 
+export const updateUserTopics = async (req, res) => {
+  try {
+    const userId = req.userId;
+    const { topics, context } = req.body;
+    
+    if (!topics || !Array.isArray(topics)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Topics array is required'
+      });
+    }
+    
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+    
+    // Format topics for storage
+    const formattedTopics = topics.map(topic => ({
+      topic: topic.toLowerCase(),
+      category: 'wellness', // Default category
+      severity: 'informational',
+      context: context || 'From conversation'
+    }));
+    
+    // Save to user's conversationTopics
+    await user.updateConversationTopics(formattedTopics, context);
+    
+    console.log(`✅ Saved ${topics.length} topics for user ${userId}`);
+    
+    res.status(200).json({
+      success: true,
+      message: 'Topics saved successfully',
+      data: {
+        topicsCount: topics.length,
+        userTopics: user.conversationTopics.length
+      }
+    });
+    
+  } catch (error) {
+    console.error('Update user topics error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to save topics',
+      error: error.message
+    });
+  }
+};
+
 // Share article
 export const shareArticle = async (req, res) => {
   try {
@@ -321,3 +373,4 @@ const findMatchingTopics = (content, userTopics) => {
   
   return matching;
 };
+
