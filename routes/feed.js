@@ -12,7 +12,7 @@ const router = express.Router();
 // Protected routes
 router.use(authMiddleware);
 
-// Get personalized health feed
+// Get personalized health feed (NOW FROM GENERATED CONTENT)
 router.get('/personalized', getPersonalizedFeed);
 
 // Get feed by specific topics
