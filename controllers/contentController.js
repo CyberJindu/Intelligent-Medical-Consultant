@@ -169,7 +169,7 @@ export const getContentHistory = async (req, res) => {
   // ... (CONTENT REMAINS THE SAME)
   try {
     const specialistId = req.specialistId;
-    const { page = 1, limit = 10, contentType, isPublished } = req.query;
+    const { page = 1, limit = 100, contentType, isPublished } = req.query;
 
     const filter = { specialistId };
     if (contentType) filter.contentType = contentType;
@@ -177,7 +177,7 @@ export const getContentHistory = async (req, res) => {
 
     const content = await GeneratedContent.find(filter)
       .sort({ generatedAt: -1 })
-      .limit(limit * 1)
+      .limit(limit * 100)
       .skip((page - 1) * limit)
       .exec();
 
