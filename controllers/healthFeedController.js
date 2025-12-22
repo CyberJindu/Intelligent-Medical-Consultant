@@ -1,30 +1,81 @@
-import HealthPost from '../models/HealthPost.js';
+import GeneratedContent from '../models/GeneratedContent.js';
 import User from '../models/User.js';
-import { generatePersonalizedContent, getPersonalizedContentQuery } from '../utils/contentGenerator.js';
 
-// Get personalized health feed based on user's conversation topics
+// Get personalized health feed DIRECTLY from GeneratedContent
 export const getPersonalizedFeed = async (req, res) => {
   try {
     const userId = req.userId;
     
-    // Get personalized query for this user
-    const { query, sort, limit } = await getPersonalizedContentQuery(userId, 15);
+    // Get user's topics for personalization
+    const user = await User.findById(userId);
+    const userTopics = user ? user.getTopHealthInterests(5).map(interest => interest.topic) : [];
     
-    // Fetch content with personalized query
-    const feed = await HealthPost.find(query)
-      .select('title content excerpt author authorType publishDate readTime topics image shareCount saveCount')
-      .sort(sort)
-      .limit(limit);
+    console.log('🎯 User topics for personalization:', userTopics);
+    
+    // Build query based on user topics
+    let query = { isPublished: true };
+    
+    if (userTopics.length > 0) {
+      query.$or = [
+        { topic: { $in: userTopics } },
+        { keywords: { $in: userTopics } },
+        { 
+          $or: userTopics.map(topic => ({
+            title: { $regex: topic, $options: 'i' }
+          }))
+        }
+      ];
+    }
+    
+    // Fetch content DIRECTLY from GeneratedContent
+    const feed = await GeneratedContent.find(query)
+      .populate('specialistId', 'name specialty')
+      .select('title content excerpt authorName authorSpecialty contentType topic targetAudience tone wordCount keywords feedTopics generatedAt lastModified views likes shares comments isPublished')
+      .sort({ generatedAt: -1 })
+      .limit(20);
 
-    // Personalize the feed with relevance scores
-    const personalizedFeed = await generatePersonalizedContent(feed, userId);
+    console.log('📊 Found', feed.length, 'contents for feed');
+    
+    // Format for feed display
+    const formattedFeed = feed.map(content => {
+      const relevanceScore = calculateRelevanceScore(content, userTopics);
+      const matchingTopics = findMatchingTopics(content, userTopics);
+      
+      return {
+        _id: content._id,
+        title: content.title,
+        content: content.content,
+        excerpt: content.excerpt || content.content.substring(0, 200) + '...',
+        author: content.authorName || (content.specialistId ? `Dr. ${content.specialistId.name}` : 'Healthcare Specialist'),
+        authorType: 'verified_specialist',
+        publishDate: content.generatedAt,
+        readTime: content.readTime || `${Math.ceil(content.content.length / 1000)} min read`,
+        topics: content.feedTopics || [content.topic, ...(content.keywords || [])].slice(0, 5),
+        specialistSpecialty: content.authorSpecialty || content.specialistId?.specialty,
+        isSpecialistContent: true,
+        relevanceScore,
+        matchingTopics,
+        matchPercentage: Math.round((matchingTopics.length / Math.max(userTopics.length, 1)) * 100),
+        engagement: {
+          views: content.views || 0,
+          likes: content.likes || 0,
+          shares: content.shares || 0,
+          comments: content.comments || 0
+        }
+      };
+    });
+
+    // Sort by relevance
+    formattedFeed.sort((a, b) => b.relevanceScore - a.relevanceScore);
 
     res.status(200).json({
       success: true,
       data: { 
-        feed: personalizedFeed,
+        feed: formattedFeed,
         generatedAt: new Date(),
-        personalizationLevel: personalizedFeed.length > 0 ? 'high' : 'medium'
+        personalizationLevel: userTopics.length > 0 ? 'high' : 'medium',
+        userTopicsCount: userTopics.length,
+        feedSource: 'generated_content'
       }
     });
 
@@ -53,30 +104,58 @@ export const getFeedByTopics = async (req, res) => {
 
     const topicArray = Array.isArray(topics) ? topics : [topics];
     
-    // Also fetch user to check if these are their interests
     const user = await User.findById(userId);
     const isUserInterest = user ? 
       topicArray.some(topic => 
         user.conversationTopics?.some(ct => ct.topic.includes(topic))
       ) : false;
     
-    const feed = await HealthPost.find({
-      topics: { $in: topicArray },
-      isActive: true
+    // Fetch DIRECTLY from GeneratedContent
+    const feed = await GeneratedContent.find({
+      isPublished: true,
+      $or: [
+        { topic: { $in: topicArray } },
+        { keywords: { $in: topicArray } }
+      ]
     })
-    .select('title content excerpt author authorType publishDate readTime topics image shareCount saveCount')
-    .sort({ publishDate: -1 })
+    .populate('specialistId', 'name specialty')
+    .select('title content excerpt authorName authorSpecialty topic keywords generatedAt')
+    .sort({ generatedAt: -1 })
     .limit(15);
 
-    // Personalize even topic-based feeds
-    const personalizedFeed = await generatePersonalizedContent(feed, userId);
+    // Format feed
+    const formattedFeed = feed.map(content => {
+      const relevanceScore = calculateRelevanceScore(content, topicArray);
+      
+      return {
+        _id: content._id,
+        title: content.title,
+        content: content.content,
+        excerpt: content.excerpt || content.content.substring(0, 200) + '...',
+        author: content.authorName || (content.specialistId ? `Dr. ${content.specialistId.name}` : 'Healthcare Specialist'),
+        authorType: 'verified_specialist',
+        publishDate: content.generatedAt,
+        readTime: content.readTime || `${Math.ceil(content.content.length / 1000)} min read`,
+        topics: content.feedTopics || [content.topic, ...(content.keywords || [])],
+        specialistSpecialty: content.authorSpecialty || content.specialistId?.specialty,
+        isSpecialistContent: true,
+        relevanceScore,
+        matchingTopics: topicArray.filter(topic => 
+          content.topic.includes(topic) || 
+          content.keywords?.includes(topic)
+        ).map(topic => ({ postTopic: topic, userTopic: topic, exactMatch: true }))
+      };
+    });
+
+    formattedFeed.sort((a, b) => b.relevanceScore - a.relevanceScore);
 
     res.status(200).json({
       success: true,
       data: { 
-        feed: personalizedFeed,
+        feed: formattedFeed,
         topics: topicArray,
-        isUserInterest: isUserInterest
+        isUserInterest: isUserInterest,
+        feedSource: 'generated_content'
       }
     });
 
@@ -90,13 +169,13 @@ export const getFeedByTopics = async (req, res) => {
   }
 };
 
-// Save article for later (update user's interests)
+// Save article for later
 export const saveArticle = async (req, res) => {
   try {
     const { articleId } = req.params;
     const userId = req.userId;
 
-    const article = await HealthPost.findById(articleId);
+    const article = await GeneratedContent.findById(articleId);
     
     if (!article) {
       return res.status(404).json({
@@ -105,18 +184,18 @@ export const saveArticle = async (req, res) => {
       });
     }
 
-    // Increment save count on article
-    article.saveCount += 1;
+    // Increment save count
+    article.saveCount = (article.saveCount || 0) + 1;
     await article.save();
 
-    // Update user's interests based on article topics
+    // Update user's interests
     const user = await User.findById(userId);
-    if (user && article.topics && article.topics.length > 0) {
-      const newTopics = article.topics.map(topic => ({
-        topic: topic.toLowerCase(),
+    if (user && article.topic) {
+      const newTopics = [{
+        topic: article.topic.toLowerCase(),
         category: 'wellness',
         severity: 'informational'
-      }));
+      }];
       
       await user.updateConversationTopics(newTopics, `Saved article: ${article.title}`);
     }
@@ -139,13 +218,13 @@ export const saveArticle = async (req, res) => {
   }
 };
 
-// Share article (track engagement)
+// Share article
 export const shareArticle = async (req, res) => {
   try {
     const { articleId } = req.params;
     const userId = req.userId;
 
-    const article = await HealthPost.findById(articleId);
+    const article = await GeneratedContent.findById(articleId);
     
     if (!article) {
       return res.status(404).json({
@@ -155,7 +234,7 @@ export const shareArticle = async (req, res) => {
     }
 
     // Increment share count
-    article.shareCount += 1;
+    article.shares = (article.shares || 0) + 1;
     await article.save();
 
     // Track user engagement
@@ -174,7 +253,7 @@ export const shareArticle = async (req, res) => {
       success: true,
       message: 'Article shared successfully',
       data: {
-        shareCount: article.shareCount
+        shareCount: article.shares
       }
     });
 
@@ -186,4 +265,59 @@ export const shareArticle = async (req, res) => {
       error: error.message
     });
   }
+};
+
+/**
+ * Helper: Calculate relevance score
+ */
+const calculateRelevanceScore = (content, userTopics) => {
+  let score = 0;
+  
+  // Topic matching
+  const contentTopics = [
+    content.topic,
+    ...(content.keywords || [])
+  ];
+  
+  const matchingTopics = contentTopics.filter(topic => 
+    userTopics.some(userTopic => 
+      topic.toLowerCase().includes(userTopic.toLowerCase()) ||
+      userTopic.toLowerCase().includes(topic.toLowerCase())
+    )
+  );
+  
+  score += Math.min(matchingTopics.length * 20, 60);
+  
+  // Recency (40 points max)
+  const daysOld = (new Date() - content.generatedAt) / (1000 * 60 * 60 * 24);
+  score += Math.max(0, 40 - (daysOld * 2));
+  
+  return Math.round(Math.min(score, 100));
+};
+
+/**
+ * Helper: Find matching topics
+ */
+const findMatchingTopics = (content, userTopics) => {
+  const contentTopics = [
+    content.topic,
+    ...(content.keywords || [])
+  ];
+  
+  const matching = [];
+  
+  contentTopics.forEach(postTopic => {
+    userTopics.forEach(userTopic => {
+      if (postTopic.toLowerCase().includes(userTopic.toLowerCase()) ||
+          userTopic.toLowerCase().includes(postTopic.toLowerCase())) {
+        matching.push({
+          postTopic,
+          userTopic,
+          exactMatch: postTopic.toLowerCase() === userTopic.toLowerCase()
+        });
+      }
+    });
+  });
+  
+  return matching;
 };
