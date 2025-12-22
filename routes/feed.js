@@ -6,6 +6,7 @@ import {
   shareArticle 
 } from '../controllers/healthFeedController.js';
 import { authMiddleware } from '../middleware/auth.js';
+import { updateUserTopics } from '../controllers/healthFeedController.js';
 
 const router = express.Router();
 
@@ -24,4 +25,8 @@ router.post('/articles/:articleId/save', saveArticle);
 // Share article
 router.post('/articles/:articleId/share', shareArticle);
 
+// Route for Feed
+router.post('/user/topics', updateUserTopics);
+
 export default router;
+
