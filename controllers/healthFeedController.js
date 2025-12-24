@@ -1,9 +1,8 @@
 import GeneratedContent from '../models/GeneratedContent.js';
 import User from '../models/User.js';
 import Specialist from '../models/Specialist.js';
-import { analyzeTopicsForMatching } from '../utils/geminiHelper.js'; 
 
-// Get personalized health feed with SEMANTIC topic matching
+// Get personalized health feed DIRECTLY from GeneratedContent
 export const getPersonalizedFeed = async (req, res) => {
   try {
     const userId = req.userId;
@@ -14,61 +13,46 @@ export const getPersonalizedFeed = async (req, res) => {
     
     console.log('🎯 User topics for personalization:', userTopics);
     
-    // Get ALL published contents
-    const allContents = await GeneratedContent.find({ isPublished: true })
+    // Build query based on user topics
+    let query = { isPublished: true };
+    
+    if (userTopics.length > 0) {
+      query.$or = [
+        { topic: { $in: userTopics } },
+        { keywords: { $in: userTopics } },
+        { 
+          $or: userTopics.map(topic => ({
+            title: { $regex: topic, $options: 'i' }
+          }))
+        }
+      ];
+    }
+    
+    console.log('🔍 Query:', JSON.stringify(query, null, 2));
+    
+    // Fetch content - ONLY SELECT FIELDS THAT ACTUALLY EXIST
+    const feed = await GeneratedContent.find(query)
       .populate('specialistId', 'name specialty')
       .select('title content contentType topic targetAudience tone wordCount keywords generatedAt lastModified isPublished')
       .sort({ generatedAt: -1 })
-      .limit(50); // Get more for better matching
+      .limit(20);
 
-    console.log('📊 Total published contents:', allContents.length);
+    console.log('📊 Found', feed.length, 'contents for feed');
     
-    // If no user topics OR no contents, return general feed
-    if (userTopics.length === 0 || allContents.length === 0) {
-      const generalFeed = await getGeneralFeed(allContents);
-      return res.json({
-        success: true,
-        data: { 
-          feed: generalFeed,
-          generatedAt: new Date(),
-          personalizationLevel: 'low',
-          feedSource: 'general_fallback'
-        }
-      });
+    // If NO contents found with topic matching, GET ALL published contents as fallback
+    let contentsToShow = feed;
+    if (feed.length === 0) {
+      console.log('🔄 No topic matches found, falling back to ALL published contents');
+      contentsToShow = await GeneratedContent.find({ isPublished: true })
+        .populate('specialistId', 'name specialty')
+        .select('title content contentType topic targetAudience tone wordCount keywords generatedAt lastModified isPublished')
+        .sort({ generatedAt: -1 })
+        .limit(20);
+      console.log('📊 Fallback - Total published contents:', contentsToShow.length);
     }
     
-    // Use Gemini to find SEMANTIC matches between user topics and content topics
-    console.log('🤖 Using Gemini for semantic topic matching...');
-    
-    // Prepare content topics for Gemini analysis
-    const contentTopicsMap = {};
-    allContents.forEach(content => {
-      const topics = [
-        content.topic,
-        ...(content.keywords || []),
-        content.contentType
-      ].filter(t => t && typeof t === 'string');
-      
-      contentTopicsMap[content._id] = {
-        id: content._id,
-        title: content.title,
-        topics: topics
-      };
-    });
-    
-    // Get semantic matches using Gemini
-    const semanticMatches = await findSemanticMatches(userTopics, contentTopicsMap);
-    
-    console.log('✅ Semantic matches found:', semanticMatches.length);
-    
-    // Sort contents by semantic match score
-    const matchedContentIds = semanticMatches.map(match => match.contentId);
-    const unmatchedContents = allContents.filter(content => 
-      !matchedContentIds.includes(content._id.toString())
-    );
-    
-    // Get specialist names
-    const specialistIds = [...new Set(allContents.map(content => content.specialistId))];
+    // Get specialist names for all contents
+    const specialistIds = [...new Set(contentsToShow.map(content => content.specialistId))];
     const specialists = await Specialist.find({ _id: { $in: specialistIds } })
       .select('name specialty')
       .lean();
@@ -78,18 +62,18 @@ export const getPersonalizedFeed = async (req, res) => {
       specialistMap[spec._id.toString()] = spec;
     });
     
-    // Format matched contents first (with semantic scores)
-    const formattedMatchedFeed = semanticMatches.map(match => {
-      const content = allContents.find(c => c._id.toString() === match.contentId);
-      if (!content) return null;
+    // Format for feed display - USE ONLY ACTUAL FIELDS
+    const formattedFeed = contentsToShow.map((content) => {
+      const relevanceScore = calculateRelevanceScore(content, userTopics);
+      const matchingTopics = findMatchingTopics(content, userTopics);
       
       const specialist = specialistMap[content.specialistId?._id?.toString() || content.specialistId?.toString()];
       
-      // Calculate read time
+      // Calculate read time from content length
       const wordCount = content.content ? content.content.split(/\s+/).length : 0;
       const readTimeMinutes = Math.ceil(wordCount / 200);
       
-      // Create topics array
+      // Create topics array from actual fields
       const contentTopics = [];
       if (content.topic) contentTopics.push(content.topic.toLowerCase());
       if (content.keywords && Array.isArray(content.keywords)) {
@@ -97,7 +81,13 @@ export const getPersonalizedFeed = async (req, res) => {
           if (kw && typeof kw === 'string') contentTopics.push(kw.toLowerCase());
         });
       }
+      if (content.contentType) contentTopics.push(content.contentType.toLowerCase().replace('_', ' '));
       
+      // Add common health categories
+      const healthCategories = ['health', 'wellness', 'medical'];
+      healthCategories.forEach(cat => contentTopics.push(cat));
+      
+      // Remove duplicates and limit
       const uniqueTopics = [...new Set(contentTopics)].slice(0, 6);
       
       return {
@@ -112,348 +102,149 @@ export const getPersonalizedFeed = async (req, res) => {
         topics: uniqueTopics,
         specialistSpecialty: specialist?.specialty || '',
         isSpecialistContent: true,
-        relevanceScore: Math.min(match.semanticScore * 100, 95), // Convert to percentage
-        matchingTopics: match.matchingPairs,
-        matchPercentage: Math.round(match.semanticScore * 100),
-        semanticMatch: true,
-        matchReason: match.explanation
-      };
-    }).filter(item => item !== null);
-    
-    // Format unmatched contents (fallback)
-    const formattedUnmatchedFeed = unmatchedContents.slice(0, 10).map(content => {
-      const specialist = specialistMap[content.specialistId?._id?.toString() || content.specialistId?.toString()];
-      
-      const wordCount = content.content ? content.content.split(/\s+/).length : 0;
-      const readTimeMinutes = Math.ceil(wordCount / 200);
-      
-      const contentTopics = [];
-      if (content.topic) contentTopics.push(content.topic.toLowerCase());
-      if (content.keywords && Array.isArray(content.keywords)) {
-        content.keywords.forEach(kw => {
-          if (kw && typeof kw === 'string') contentTopics.push(kw.toLowerCase());
-        });
-      }
-      
-      const uniqueTopics = [...new Set(contentTopics)].slice(0, 6);
-      
-      // Calculate basic relevance based on recency
-      const daysOld = (new Date() - content.generatedAt) / (1000 * 60 * 60 * 24);
-      const recencyScore = Math.max(0, 50 - (daysOld));
-      
-      return {
-        _id: content._id,
-        title: content.title,
-        content: content.content,
-        excerpt: content.content ? content.content.substring(0, 200) + (content.content.length > 200 ? '...' : '') : '',
-        author: specialist ? `Dr. ${specialist.name}` : 'Healthcare Specialist',
-        authorType: 'verified_specialist',
-        publishDate: content.generatedAt,
-        readTime: `${readTimeMinutes} min read`,
-        topics: uniqueTopics,
-        specialistSpecialty: specialist?.specialty || '',
-        isSpecialistContent: true,
-        relevanceScore: Math.round(recencyScore),
-        semanticMatch: false,
-        matchReason: 'General recommendation based on recency'
+        relevanceScore,
+        matchingTopics,
+        matchPercentage: Math.round((matchingTopics.length / Math.max(userTopics.length, 1)) * 100),
+        // Add debug info
+        userTopics: userTopics,
+        contentTopic: content.topic,
+        contentKeywords: content.keywords,
+        queryUsed: feed.length === 0 ? 'fallback_all_published' : 'topic_matched'
       };
     });
-    
-    // Combine matched first, then unmatched
-    const finalFeed = [...formattedMatchedFeed, ...formattedUnmatchedFeed];
-    
+
+    // Sort by relevance
+    formattedFeed.sort((a, b) => b.relevanceScore - a.relevanceScore);
+
     res.status(200).json({
       success: true,
       data: { 
-        feed: finalFeed.slice(0, 20), // Limit to 20 items
+        feed: formattedFeed,
         generatedAt: new Date(),
-        personalizationLevel: semanticMatches.length > 0 ? 'high' : 'medium',
+        personalizationLevel: userTopics.length > 0 ? 'high' : 'medium',
         userTopicsCount: userTopics.length,
-        semanticMatchesCount: semanticMatches.length,
-        feedSource: 'semantic_gemini_matching',
+        feedSource: 'generated_content',
+        totalContents: contentsToShow.length,
+        matchedByTopic: feed.length,
         debug: {
-          userTopics,
-          totalContents: allContents.length,
-          semanticMatches: semanticMatches.length
+          queryUsed: feed.length === 0 ? 'fallback (no topic matches)' : 'topic matching',
+          userTopics: userTopics
         }
       }
     });
 
   } catch (error) {
     console.error('Health feed error:', error);
-    
-    // Fallback to general feed if Gemini fails
-    try {
-      console.log('🔄 Gemini failed, falling back to general feed...');
-      const allContents = await GeneratedContent.find({ isPublished: true })
-        .populate('specialistId', 'name specialty')
-        .select('title content topic keywords generatedAt')
-        .sort({ generatedAt: -1 })
-        .limit(15);
-      
-      const generalFeed = await getGeneralFeed(allContents);
-      
-      return res.json({
-        success: true,
-        data: { 
-          feed: generalFeed,
-          generatedAt: new Date(),
-          personalizationLevel: 'low',
-          feedSource: 'fallback_general',
-          error: error.message
-        }
-      });
-    } catch (fallbackError) {
-      return res.status(500).json({
-        success: false,
-        message: 'Failed to fetch health feed',
-        error: error.message
-      });
-    }
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch health feed',
+      error: error.message
+    });
   }
 };
 
-// Helper: Get general feed without semantic matching
-const getGeneralFeed = async (contents) => {
-  const specialistIds = [...new Set(contents.map(content => content.specialistId))];
-  const specialists = await Specialist.find({ _id: { $in: specialistIds } })
-    .select('name specialty')
-    .lean();
-  
-  const specialistMap = {};
-  specialists.forEach(spec => {
-    specialistMap[spec._id.toString()] = spec;
-  });
-  
-  return contents.map(content => {
-    const specialist = specialistMap[content.specialistId?._id?.toString() || content.specialistId?.toString()];
+// Get feed by specific topics
+export const getFeedByTopics = async (req, res) => {
+  try {
+    const { topics } = req.query;
+    const userId = req.userId;
     
-    const wordCount = content.content ? content.content.split(/\s+/).length : 0;
-    const readTimeMinutes = Math.ceil(wordCount / 200);
-    
-    const contentTopics = [];
-    if (content.topic) contentTopics.push(content.topic.toLowerCase());
-    if (content.keywords && Array.isArray(content.keywords)) {
-      content.keywords.forEach(kw => {
-        if (kw && typeof kw === 'string') contentTopics.push(kw.toLowerCase());
+    if (!topics) {
+      return res.status(400).json({
+        success: false,
+        message: 'Topics are required'
       });
     }
-    
-    const uniqueTopics = [...new Set(contentTopics)].slice(0, 6);
-    
-    // Calculate recency score
-    const daysOld = (new Date() - content.generatedAt) / (1000 * 60 * 60 * 24);
-    const recencyScore = Math.max(0, 70 - (daysOld * 2));
-    
-    return {
-      _id: content._id,
-      title: content.title,
-      content: content.content,
-      excerpt: content.content ? content.content.substring(0, 200) + (content.content.length > 200 ? '...' : '') : '',
-      author: specialist ? `Dr. ${specialist.name}` : 'Healthcare Specialist',
-      authorType: 'verified_specialist',
-      publishDate: content.generatedAt,
-      readTime: `${readTimeMinutes} min read`,
-      topics: uniqueTopics,
-      specialistSpecialty: specialist?.specialty || '',
-      isSpecialistContent: true,
-      relevanceScore: Math.round(recencyScore),
-      semanticMatch: false,
-      matchReason: 'General health recommendation'
-    };
-  });
-};
 
-// Semantic matching using Gemini
-const findSemanticMatches = async (userTopics, contentTopicsMap) => {
-  try {
-    // If Gemini is not available or quota exceeded, use keyword fallback
-    if (process.env.GEMINI_DISABLED === 'true') {
-      console.log('⚠️ Gemini disabled, using keyword fallback matching');
-      return findKeywordMatches(userTopics, contentTopicsMap);
-    }
+    const topicArray = Array.isArray(topics) ? topics : [topics];
     
-    // Prepare prompt for Gemini
-    const contentsArray = Object.values(contentTopicsMap);
+    const user = await User.findById(userId);
+    const isUserInterest = user ? 
+      topicArray.some(topic => 
+        user.conversationTopics?.some(ct => ct.topic.includes(topic))
+      ) : false;
     
-    const prompt = `
-    I need to find semantic matches between user health interests and medical content topics.
+    // Fetch DIRECTLY from GeneratedContent - SIMPLE QUERY
+    const feed = await GeneratedContent.find({
+      isPublished: true,
+      $or: [
+        { topic: { $in: topicArray } },
+        { keywords: { $in: topicArray } }
+      ]
+    })
+    .populate('specialistId', 'name specialty')
+    .select('title content topic keywords generatedAt')
+    .sort({ generatedAt: -1 })
+    .limit(15);
+
+    // Get specialist names
+    const specialistIds = [...new Set(feed.map(content => content.specialistId))];
+    const specialists = await Specialist.find({ _id: { $in: specialistIds } })
+      .select('name specialty')
+      .lean();
     
-    USER INTERESTS: ${JSON.stringify(userTopics)}
-    
-    AVAILABLE CONTENT TOPICS:
-    ${contentsArray.map(c => `Content ID: ${c.id}, Title: "${c.title}", Topics: ${JSON.stringify(c.topics)}`).join('\n')}
-    
-    For EACH user interest, find ALL content topics that are semantically related.
-    Consider:
-    1. Medical synonyms (e.g., "heart health" = "cardiovascular", "cardio")
-    2. Related conditions (e.g., "headache" = "migraine", "tension")
-    3. Broader/narrower terms (e.g., "nutrition" = "diet", "vitamins")
-    4. Symptom-disease relationships (e.g., "fever" = "infection", "inflammation")
-    
-    Return a JSON array of matches with this format:
-    [
-      {
-        "contentId": "content_id_here",
-        "userTopic": "user_topic_here", 
-        "contentTopic": "matched_topic_here",
-        "semanticScore": 0.85, // 0.0 to 1.0
-        "relationship": "exact_match|synonym|related_condition|broader_term|narrower_term",
-        "explanation": "Brief explanation of the semantic relationship"
-      }
-    ]
-    
-    Only include matches with semanticScore >= 0.4.
-    `;
-    
-    // Call Gemini API (you'll need to implement this)
-    const geminiResponse = await callGeminiForTopicMatching(prompt);
-    
-    if (!geminiResponse || !Array.isArray(geminiResponse)) {
-      throw new Error('Invalid response from Gemini');
-    }
-    
-    // Group matches by content and calculate aggregate scores
-    const matchesByContent = {};
-    geminiResponse.forEach(match => {
-      if (!matchesByContent[match.contentId]) {
-        matchesByContent[match.contentId] = [];
-      }
-      matchesByContent[match.contentId].push(match);
+    const specialistMap = {};
+    specialists.forEach(spec => {
+      specialistMap[spec._id.toString()] = spec;
     });
-    
-    // Calculate final scores per content
-    const finalMatches = Object.entries(matchesByContent).map(([contentId, matches]) => {
-      const avgScore = matches.reduce((sum, m) => sum + m.semanticScore, 0) / matches.length;
-      const matchingPairs = matches.map(m => ({
-        userTopic: m.userTopic,
-        contentTopic: m.contentTopic,
-        relationship: m.relationship
-      }));
+
+    // Format feed
+    const formattedFeed = feed.map(content => {
+      const relevanceScore = calculateRelevanceScore(content, topicArray);
+      const specialist = specialistMap[content.specialistId?._id?.toString() || content.specialistId?.toString()];
       
-      // Find the best explanation
-      const bestMatch = matches.sort((a, b) => b.semanticScore - a.semanticScore)[0];
+      // Create topics
+      const contentTopics = [];
+      if (content.topic) contentTopics.push(content.topic.toLowerCase());
+      if (content.keywords && Array.isArray(content.keywords)) {
+        content.keywords.forEach(kw => {
+          if (kw && typeof kw === 'string') contentTopics.push(kw.toLowerCase());
+        });
+      }
       
       return {
-        contentId,
-        semanticScore: avgScore,
-        matchingPairs,
-        explanation: bestMatch.explanation || `Matches ${matches.length} user interests`
+        _id: content._id,
+        title: content.title,
+        content: content.content,
+        excerpt: content.content ? content.content.substring(0, 200) + '...' : '',
+        author: specialist ? `Dr. ${specialist.name}` : 'Healthcare Specialist',
+        authorType: 'verified_specialist',
+        publishDate: content.generatedAt,
+        readTime: `${Math.ceil(content.content?.length / 1000) || 5} min read`,
+        topics: contentTopics,
+        specialistSpecialty: specialist?.specialty || '',
+        isSpecialistContent: true,
+        relevanceScore,
+        matchingTopics: topicArray.filter(topic => 
+          content.topic?.includes(topic) || 
+          content.keywords?.includes(topic)
+        ).map(topic => ({ postTopic: topic, userTopic: topic, exactMatch: true }))
       };
     });
-    
-    // Sort by semantic score (highest first)
-    return finalMatches.sort((a, b) => b.semanticScore - a.semanticScore);
-    
-  } catch (error) {
-    console.error('Semantic matching error:', error);
-    // Fallback to keyword matching
-    return findKeywordMatches(userTopics, contentTopicsMap);
-  }
-};
 
-// Fallback: Simple keyword matching
-const findKeywordMatches = (userTopics, contentTopicsMap) => {
-  const matches = [];
-  
-  Object.values(contentTopicsMap).forEach(content => {
-    const contentTopics = content.topics.map(t => t.toLowerCase());
-    const userTopicsLower = userTopics.map(t => t.toLowerCase());
-    
-    const matchingPairs = [];
-    
-    userTopicsLower.forEach(userTopic => {
-      contentTopics.forEach(contentTopic => {
-        // Simple keyword matching
-        if (contentTopic.includes(userTopic) || userTopic.includes(contentTopic)) {
-          matchingPairs.push({
-            userTopic,
-            contentTopic,
-            relationship: 'keyword_match'
-          });
-        }
-        
-        // Check for common medical synonyms
-        const synonyms = getMedicalSynonyms(userTopic);
-        synonyms.forEach(synonym => {
-          if (contentTopic.includes(synonym) || contentTopic === synonym) {
-            matchingPairs.push({
-              userTopic,
-              contentTopic,
-              relationship: 'synonym_match'
-            });
-          }
-        });
-      });
-    });
-    
-    if (matchingPairs.length > 0) {
-      const score = Math.min(matchingPairs.length * 0.2, 0.8); // Max 0.8 for keyword matches
-      matches.push({
-        contentId: content.id,
-        semanticScore: score,
-        matchingPairs,
-        explanation: `Found ${matchingPairs.length} keyword matches`
-      });
-    }
-  });
-  
-  return matches.sort((a, b) => b.semanticScore - a.semanticScore);
-};
+    formattedFeed.sort((a, b) => b.relevanceScore - a.relevanceScore);
 
-// Common medical synonyms (could be expanded)
-const getMedicalSynonyms = (topic) => {
-  const synonymMap = {
-    'heart': ['cardiovascular', 'cardio', 'cardiac', 'heart disease', 'heart attack'],
-    'headache': ['migraine', 'tension headache', 'cephalalgia', 'head pain'],
-    'fever': ['pyrexia', 'high temperature', 'hyperthermia'],
-    'pain': ['ache', 'discomfort', 'soreness', 'hurt'],
-    'stress': ['anxiety', 'tension', 'pressure', 'worry'],
-    'sleep': ['insomnia', 'rest', 'slumber', 'sleep disorder'],
-    'nutrition': ['diet', 'food', 'eating', 'nutrients', 'vitamins'],
-    'exercise': ['workout', 'physical activity', 'fitness', 'training'],
-    'weight': ['obesity', 'body mass', 'fat', 'weight loss'],
-    'mental': ['psychological', 'emotional', 'psychiatric', 'mind']
-  };
-  
-  const topicLower = topic.toLowerCase();
-  for (const [key, synonyms] of Object.entries(synonymMap)) {
-    if (topicLower.includes(key) || synonyms.some(s => topicLower.includes(s))) {
-      return synonyms;
-    }
-  }
-  
-  return [];
-};
-
-// Mock Gemini call (you need to implement actual Gemini API call)
-const callGeminiForTopicMatching = async (prompt) => {
-  try {
-    // TODO: Replace with actual Gemini API call
-    // For now, return mock data
-    console.log('🤖 Calling Gemini for semantic matching...');
-    
-    // Simulate Gemini API delay
-    await new Promise(resolve => setTimeout(resolve, 1000));
-    
-    // Mock response - in real implementation, call Gemini API
-    return [
-      {
-        contentId: "example_content_id",
-        userTopic: "heart health",
-        contentTopic: "cardiovascular wellness",
-        semanticScore: 0.85,
-        relationship: "synonym",
-        explanation: "'heart health' is synonymous with 'cardiovascular wellness' in medical context"
+    res.status(200).json({
+      success: true,
+      data: { 
+        feed: formattedFeed,
+        topics: topicArray,
+        isUserInterest: isUserInterest,
+        feedSource: 'generated_content'
       }
-    ];
-    
+    });
+
   } catch (error) {
-    console.error('Gemini API error:', error);
-    throw error;
+    console.error('Feed by topics error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch feed by topics',
+      error: error.message
+    });
   }
 };
 
+// Save article for later
 export const saveArticle = async (req, res) => {
   try {
     const { articleId } = req.params;
@@ -554,6 +345,7 @@ export const updateUserTopics = async (req, res) => {
   }
 };
 
+// Share article
 export const shareArticle = async (req, res) => {
   try {
     const { articleId } = req.params;
