@@ -1,5 +1,6 @@
 import GeneratedContent from '../models/GeneratedContent.js';
 import User from '../models/User.js';
+import Specialist from '../models/Specialist.js'; // ADD THIS IMPORT
 
 // Get personalized health feed DIRECTLY from GeneratedContent
 export const getPersonalizedFeed = async (req, res) => {
@@ -12,7 +13,7 @@ export const getPersonalizedFeed = async (req, res) => {
     
     console.log('🎯 User topics for personalization:', userTopics);
     
-    // Build query based on user topics
+    // Build SIMPLE query - NO isActive, NO feedTopics
     let query = { isPublished: true };
     
     if (userTopics.length > 0) {
@@ -27,43 +28,73 @@ export const getPersonalizedFeed = async (req, res) => {
       ];
     }
     
-    // Fetch content DIRECTLY from GeneratedContent
+    console.log('🔍 Query:', JSON.stringify(query, null, 2));
+    
+    // Fetch content - ONLY SELECT FIELDS THAT ACTUALLY EXIST
     const feed = await GeneratedContent.find(query)
       .populate('specialistId', 'name specialty')
-      .select('title content excerpt authorName authorSpecialty contentType topic targetAudience tone wordCount keywords feedTopics generatedAt lastModified views likes shares comments isPublished')
+      .select('title content contentType topic targetAudience tone wordCount keywords generatedAt lastModified isPublished')
       .sort({ generatedAt: -1 })
       .limit(20);
 
     console.log('📊 Found', feed.length, 'contents for feed');
     
-    // Format for feed display
-    const formattedFeed = feed.map(content => {
+    // Get specialist names for all contents
+    const specialistIds = [...new Set(feed.map(content => content.specialistId))];
+    const specialists = await Specialist.find({ _id: { $in: specialistIds } })
+      .select('name specialty')
+      .lean();
+    
+    const specialistMap = {};
+    specialists.forEach(spec => {
+      specialistMap[spec._id.toString()] = spec;
+    });
+    
+    // Format for feed display - USE ONLY ACTUAL FIELDS
+    const formattedFeed = await Promise.all(feed.map(async (content) => {
       const relevanceScore = calculateRelevanceScore(content, userTopics);
       const matchingTopics = findMatchingTopics(content, userTopics);
+      
+      const specialist = specialistMap[content.specialistId?._id?.toString() || content.specialistId?.toString()];
+      
+      // Calculate read time from content length
+      const wordCount = content.content ? content.content.split(/\s+/).length : 0;
+      const readTimeMinutes = Math.ceil(wordCount / 200);
+      
+      // Create topics array from actual fields
+      const contentTopics = [];
+      if (content.topic) contentTopics.push(content.topic.toLowerCase());
+      if (content.keywords && Array.isArray(content.keywords)) {
+        content.keywords.forEach(kw => {
+          if (kw && typeof kw === 'string') contentTopics.push(kw.toLowerCase());
+        });
+      }
+      if (content.contentType) contentTopics.push(content.contentType.toLowerCase().replace('_', ' '));
+      
+      // Add common health categories
+      const healthCategories = ['health', 'wellness', 'medical'];
+      healthCategories.forEach(cat => contentTopics.push(cat));
+      
+      // Remove duplicates and limit
+      const uniqueTopics = [...new Set(contentTopics)].slice(0, 6);
       
       return {
         _id: content._id,
         title: content.title,
         content: content.content,
-        excerpt: content.excerpt || content.content.substring(0, 200) + '...',
-        author: content.authorName || (content.specialistId ? `Dr. ${content.specialistId.name}` : 'Healthcare Specialist'),
+        excerpt: content.content ? content.content.substring(0, 200) + (content.content.length > 200 ? '...' : '') : '',
+        author: specialist ? `Dr. ${specialist.name}` : 'Healthcare Specialist',
         authorType: 'verified_specialist',
         publishDate: content.generatedAt,
-        readTime: content.readTime || `${Math.ceil(content.content.length / 1000)} min read`,
-        topics: content.feedTopics || [content.topic, ...(content.keywords || [])].slice(0, 5),
-        specialistSpecialty: content.authorSpecialty || content.specialistId?.specialty,
+        readTime: `${readTimeMinutes} min read`,
+        topics: uniqueTopics,
+        specialistSpecialty: specialist?.specialty || '',
         isSpecialistContent: true,
         relevanceScore,
         matchingTopics,
-        matchPercentage: Math.round((matchingTopics.length / Math.max(userTopics.length, 1)) * 100),
-        engagement: {
-          views: content.views || 0,
-          likes: content.likes || 0,
-          shares: content.shares || 0,
-          comments: content.comments || 0
-        }
+        matchPercentage: Math.round((matchingTopics.length / Math.max(userTopics.length, 1)) * 100)
       };
-    });
+    }));
 
     // Sort by relevance
     formattedFeed.sort((a, b) => b.relevanceScore - a.relevanceScore);
@@ -75,7 +106,8 @@ export const getPersonalizedFeed = async (req, res) => {
         generatedAt: new Date(),
         personalizationLevel: userTopics.length > 0 ? 'high' : 'medium',
         userTopicsCount: userTopics.length,
-        feedSource: 'generated_content'
+        feedSource: 'generated_content',
+        totalContents: feed.length
       }
     });
 
@@ -110,7 +142,7 @@ export const getFeedByTopics = async (req, res) => {
         user.conversationTopics?.some(ct => ct.topic.includes(topic))
       ) : false;
     
-    // Fetch DIRECTLY from GeneratedContent
+    // Fetch DIRECTLY from GeneratedContent - SIMPLE QUERY
     const feed = await GeneratedContent.find({
       isPublished: true,
       $or: [
@@ -119,29 +151,50 @@ export const getFeedByTopics = async (req, res) => {
       ]
     })
     .populate('specialistId', 'name specialty')
-    .select('title content excerpt authorName authorSpecialty topic keywords generatedAt')
+    .select('title content topic keywords generatedAt')
     .sort({ generatedAt: -1 })
     .limit(15);
+
+    // Get specialist names
+    const specialistIds = [...new Set(feed.map(content => content.specialistId))];
+    const specialists = await Specialist.find({ _id: { $in: specialistIds } })
+      .select('name specialty')
+      .lean();
+    
+    const specialistMap = {};
+    specialists.forEach(spec => {
+      specialistMap[spec._id.toString()] = spec;
+    });
 
     // Format feed
     const formattedFeed = feed.map(content => {
       const relevanceScore = calculateRelevanceScore(content, topicArray);
+      const specialist = specialistMap[content.specialistId?._id?.toString() || content.specialistId?.toString()];
+      
+      // Create topics
+      const contentTopics = [];
+      if (content.topic) contentTopics.push(content.topic.toLowerCase());
+      if (content.keywords && Array.isArray(content.keywords)) {
+        content.keywords.forEach(kw => {
+          if (kw && typeof kw === 'string') contentTopics.push(kw.toLowerCase());
+        });
+      }
       
       return {
         _id: content._id,
         title: content.title,
         content: content.content,
-        excerpt: content.excerpt || content.content.substring(0, 200) + '...',
-        author: content.authorName || (content.specialistId ? `Dr. ${content.specialistId.name}` : 'Healthcare Specialist'),
+        excerpt: content.content ? content.content.substring(0, 200) + '...' : '',
+        author: specialist ? `Dr. ${specialist.name}` : 'Healthcare Specialist',
         authorType: 'verified_specialist',
         publishDate: content.generatedAt,
-        readTime: content.readTime || `${Math.ceil(content.content.length / 1000)} min read`,
-        topics: content.feedTopics || [content.topic, ...(content.keywords || [])],
-        specialistSpecialty: content.authorSpecialty || content.specialistId?.specialty,
+        readTime: `${Math.ceil(content.content?.length / 1000) || 5} min read`,
+        topics: contentTopics,
+        specialistSpecialty: specialist?.specialty || '',
         isSpecialistContent: true,
         relevanceScore,
         matchingTopics: topicArray.filter(topic => 
-          content.topic.includes(topic) || 
+          content.topic?.includes(topic) || 
           content.keywords?.includes(topic)
         ).map(topic => ({ postTopic: topic, userTopic: topic, exactMatch: true }))
       };
@@ -169,7 +222,7 @@ export const getFeedByTopics = async (req, res) => {
   }
 };
 
-// Save article for later
+// Keep saveArticle, updateUserTopics, and shareArticle functions exactly as they are
 export const saveArticle = async (req, res) => {
   try {
     const { articleId } = req.params;
@@ -241,7 +294,7 @@ export const updateUserTopics = async (req, res) => {
     // Format topics for storage
     const formattedTopics = topics.map(topic => ({
       topic: topic.toLowerCase(),
-      category: 'wellness', // Default category
+      category: 'wellness',
       severity: 'informational',
       context: context || 'From conversation'
     }));
@@ -270,7 +323,6 @@ export const updateUserTopics = async (req, res) => {
   }
 };
 
-// Share article
 export const shareArticle = async (req, res) => {
   try {
     const { articleId } = req.params;
@@ -326,10 +378,11 @@ const calculateRelevanceScore = (content, userTopics) => {
   let score = 0;
   
   // Topic matching
-  const contentTopics = [
-    content.topic,
-    ...(content.keywords || [])
-  ];
+  const contentTopics = [];
+  if (content.topic) contentTopics.push(content.topic);
+  if (content.keywords && Array.isArray(content.keywords)) {
+    contentTopics.push(...content.keywords);
+  }
   
   const matchingTopics = contentTopics.filter(topic => 
     userTopics.some(userTopic => 
@@ -351,10 +404,11 @@ const calculateRelevanceScore = (content, userTopics) => {
  * Helper: Find matching topics
  */
 const findMatchingTopics = (content, userTopics) => {
-  const contentTopics = [
-    content.topic,
-    ...(content.keywords || [])
-  ];
+  const contentTopics = [];
+  if (content.topic) contentTopics.push(content.topic);
+  if (content.keywords && Array.isArray(content.keywords)) {
+    contentTopics.push(...content.keywords);
+  }
   
   const matching = [];
   
@@ -373,4 +427,3 @@ const findMatchingTopics = (content, userTopics) => {
   
   return matching;
 };
-
