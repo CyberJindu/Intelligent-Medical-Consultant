@@ -282,9 +282,16 @@ const fallbackContentAnalysis = (userTopics, allContent) => {
 const formatFeedContent = async (contents) => {
   console.log(`🎨 Formatting ${contents.length} contents for feed`);
 
-  // First, separate content by type
-  const generatedItems = contents.filter(c => c.specialistId);
-  const healthPostItems = contents.filter(c => !c.specialistId);
+  // First, separate content by type to handle them appropriately
+const generatedItems = contents.filter(c => {
+  // GeneratedContent has specialistId (either as object or string)
+  return c.specialistId !== undefined && c.specialistId !== null;
+});
+
+const healthPostItems = contents.filter(c => {
+  // HealthPost has no specialistId
+  return c.specialistId === undefined || c.specialistId === null;
+});
   
   console.log(`📊 Found ${generatedItems.length} GeneratedContent items, ${healthPostItems.length} HealthPost items`);
 
@@ -742,3 +749,4 @@ const findMatchingTopics = (content, userTopics) => {
   
   return matching;
 };
+
