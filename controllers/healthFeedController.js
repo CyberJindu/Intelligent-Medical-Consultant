@@ -35,7 +35,7 @@ export const getPersonalizedFeed = async (req, res) => {
     const generatedContent = await GeneratedContent.find({})
       .populate('specialistId', 'name specialty')
       .sort({ generatedAt: -1 })
-      .limit(50); // Increased limit to get more content
+      .limit(50);
 
     // 2. Get ALL HealthPost (both active and inactive)
     const healthPosts = await HealthPost.find({})
@@ -48,7 +48,6 @@ export const getPersonalizedFeed = async (req, res) => {
     // Combine both collections
     let allContent = [...generatedContent, ...healthPosts];
     
-    // Log what we got
     console.log(`📊 TOTAL available content: ${allContent.length} items`);
     
     // Separate by publish status for debugging
@@ -97,6 +96,13 @@ export const getPersonalizedFeed = async (req, res) => {
     const topContent = scoredContent
       .sort((a, b) => b.relevanceScore - a.relevanceScore)
       .slice(0, 20);
+
+    // Add debug log for top content
+    console.log('📤 Top content sample:', topContent[0] ? {
+      id: topContent[0]._id,
+      title: topContent[0].title,
+      type: topContent[0].specialistId ? 'generated' : 'healthpost'
+    } : 'No content');
 
     // Format for feed display
     const formattedFeed = await formatFeedContent(topContent);
@@ -283,20 +289,35 @@ const formatFeedContent = async (contents) => {
   console.log(`🎨 Formatting ${contents.length} contents for feed`);
 
   // First, separate content by type to handle them appropriately
-const generatedItems = contents.filter(c => {
-  // GeneratedContent has specialistId (either as object or string)
-  return c.specialistId !== undefined && c.specialistId !== null;
-});
+  const generatedItems = contents.filter(c => {
+    // GeneratedContent has specialistId (either as object or string)
+    return c.specialistId !== undefined && c.specialistId !== null;
+  });
 
-const healthPostItems = contents.filter(c => {
-  // Check if it has HealthPost specific fields (author, publishDate, no specialistId)
-  return (c.specialistId === undefined || c.specialistId === null) && 
-         (c.author !== undefined || c.publishDate !== undefined);
-});
+  const healthPostItems = contents.filter(c => {
+    // Check if it has HealthPost specific fields (author, publishDate, no specialistId)
+    return (c.specialistId === undefined || c.specialistId === null) && 
+           (c.author !== undefined || c.publishDate !== undefined);
+  });
 
-console.log(`📊 Filtered: ${generatedItems.length} Generated, ${healthPostItems.length} HealthPost`);
-  
-  console.log(`📊 Found ${generatedItems.length} GeneratedContent items, ${healthPostItems.length} HealthPost items`);
+  console.log(`📊 Filtered: ${generatedItems.length} Generated, ${healthPostItems.length} HealthPost`);
+
+  // Debug first item of each type
+  if (generatedItems.length > 0) {
+    console.log('🔍 Sample GeneratedContent:', {
+      id: generatedItems[0]._id,
+      title: generatedItems[0].title,
+      hasSpecialistId: !!generatedItems[0].specialistId
+    });
+  }
+
+  if (healthPostItems.length > 0) {
+    console.log('🔍 Sample HealthPost:', {
+      id: healthPostItems[0]._id,
+      title: healthPostItems[0].title,
+      author: healthPostItems[0].author
+    });
+  }
 
   // Get specialist details for GeneratedContent items
   const specialistIds = generatedItems
@@ -363,7 +384,7 @@ console.log(`📊 Filtered: ${generatedItems.length} Generated, ${healthPostItem
       matchingTopics: content.matchingTopics || [],
       isSpecialistContent: true,
       source: 'generated',
-      isPublished: content.isPublished // Include publish status for debugging
+      isPublished: content.isPublished
     });
   }
 
@@ -752,5 +773,3 @@ const findMatchingTopics = (content, userTopics) => {
   
   return matching;
 };
-
-
