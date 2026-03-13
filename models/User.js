@@ -4,7 +4,7 @@ const userSchema = new mongoose.Schema({
   phoneNumber: {
     type: String,
     required: true,
-    unique: true,
+    unique: true,  // ← This creates an index automatically
     trim: true
   },
   name: {
@@ -14,7 +14,9 @@ const userSchema = new mongoose.Schema({
   email: {
     type: String,
     trim: true,
-    lowercase: true
+    lowercase: true,
+    unique: true,  // ← This creates an index automatically
+    sparse: true   // ← Allow multiple null/undefined values
   },
   dateOfBirth: {
     type: Date
@@ -71,7 +73,7 @@ const userSchema = new mongoose.Schema({
       type: Number,
       default: 1
     },
-    context: String // Brief context/summary from conversation
+    context: String
   }],
   
   // Health Interests derived from conversations
@@ -113,7 +115,7 @@ const userSchema = new mongoose.Schema({
       type: Date,
       default: Date.now
     },
-    duration: Number // seconds spent viewing
+    duration: Number
   }],
   
   emergencyContact: {
@@ -136,12 +138,11 @@ const userSchema = new mongoose.Schema({
   timestamps: true
 });
 
-// Index for faster queries
-userSchema.index({ phoneNumber: 1 });
+// Keep ONLY these indexes (they're not duplicates)
 userSchema.index({ lastLogin: -1 });
-userSchema.index({ 'conversationTopics.topic': 1 }); // For topic-based queries
-userSchema.index({ 'conversationTopics.lastMentioned': -1 }); // For recency
-userSchema.index({ 'healthInterests.relevanceScore': -1 }); // For interest ranking
+userSchema.index({ 'conversationTopics.topic': 1 });
+userSchema.index({ 'conversationTopics.lastMentioned': -1 });
+userSchema.index({ 'healthInterests.relevanceScore': -1 });
 
 // Virtual for user age
 userSchema.virtual('age').get(function() {
@@ -168,14 +169,12 @@ userSchema.methods.updateConversationTopics = async function(newTopics, context 
     );
     
     if (existingIndex >= 0) {
-      // Update existing topic
       currentTopics[existingIndex].lastMentioned = new Date();
       currentTopics[existingIndex].mentionCount += 1;
       if (context) {
-        currentTopics[existingIndex].context = context.substring(0, 100); // Limit context length
+        currentTopics[existingIndex].context = context.substring(0, 100);
       }
     } else {
-      // Add new topic
       currentTopics.push({
         ...newTopic,
         firstMentioned: new Date(),
@@ -194,7 +193,6 @@ userSchema.methods.updateConversationTopics = async function(newTopics, context 
 userSchema.methods.getTopHealthInterests = function(limit = 5) {
   const topics = this.conversationTopics || [];
   
-  // Calculate frequency and recency scores
   const interestMap = {};
   
   topics.forEach(topic => {
@@ -209,15 +207,12 @@ userSchema.methods.getTopHealthInterests = function(limit = 5) {
     }
     
     interestMap[topic.topic].mentionCount += topic.mentionCount;
-    // Keep the most recent date
     if (topic.lastMentioned > interestMap[topic.topic].lastMentioned) {
       interestMap[topic.topic].lastMentioned = topic.lastMentioned;
     }
   });
   
-  // Convert to array and calculate relevance scores
   const interests = Object.values(interestMap).map(item => {
-    // Calculate score based on frequency and recency
     const recencyScore = Math.max(0, 100 - 
       (Date.now() - new Date(item.lastMentioned).getTime()) / (1000 * 60 * 60 * 24)
     );
@@ -229,7 +224,6 @@ userSchema.methods.getTopHealthInterests = function(limit = 5) {
     };
   });
   
-  // Sort by relevance score
   interests.sort((a, b) => b.relevanceScore - a.relevanceScore);
   
   return interests.slice(0, limit);
@@ -245,4 +239,3 @@ userSchema.set('toJSON', {
 });
 
 export default mongoose.model('User', userSchema);
-
