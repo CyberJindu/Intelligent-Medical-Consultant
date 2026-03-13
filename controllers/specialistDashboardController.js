@@ -26,7 +26,7 @@ export const getPerformanceStats = async (req, res) => {
       {
         $match: {
           specialistId: new mongoose.Types.ObjectId(specialistId),
-          isPublished: true
+          //isPublished: true
         }
       },
       {
