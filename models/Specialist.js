@@ -1,11 +1,11 @@
 import mongoose from 'mongoose';
 
 const specialistSchema = new mongoose.Schema({
-  // Authentication fields (NEW)
+  // Authentication fields
   email: {
     type: String,
     required: true,
-    unique: true,
+    unique: true,  // ← This creates an index automatically
     trim: true,
     lowercase: true
   },
@@ -14,12 +14,12 @@ const specialistSchema = new mongoose.Schema({
     required: true
   },
   profilePicture: {
-  type: String,
-  trim: true
+    type: String,
+    trim: true
   },
   cloudinaryId: {
-  type: String,
-  trim: true
+    type: String,
+    trim: true
   },
   accountStatus: {
     type: String,
@@ -36,7 +36,7 @@ const specialistSchema = new mongoose.Schema({
     documentUrl: String,
     uploadedAt: Date
   }],
-  // The Others
+  // Professional fields
   name: {
     type: String,
     required: true,
@@ -72,7 +72,7 @@ const specialistSchema = new mongoose.Schema({
     default: 0
   },
   experience: {
-    type: Number, // years of experience
+    type: Number,
     min: 0
   },
   languages: [{
@@ -84,7 +84,7 @@ const specialistSchema = new mongoose.Schema({
     trim: true
   },
   responseTime: {
-    type: String, // e.g., "< 15 mins", "< 1 hour"
+    type: String,
     trim: true
   },
   consultationFee: {
@@ -100,7 +100,7 @@ const specialistSchema = new mongoose.Schema({
     default: true
   },
   image: {
-    type: String, // URL to profile image
+    type: String,
     trim: true
   },
   location: {
@@ -122,7 +122,6 @@ const specialistSchema = new mongoose.Schema({
     type: String,
     trim: true
   }],
-  // Additional professional fields
   medicalLicenseNumber: {
     type: String,
     trim: true
@@ -146,16 +145,10 @@ const specialistSchema = new mongoose.Schema({
   timestamps: true
 });
 
-
-
-// Index for faster queries
-specialistSchema.index({ specialty: 1, rating: -1 });
+// Keep ONLY these indexes (remove duplicates)
 specialistSchema.index({ isActive: 1, isOnline: 1 });
 specialistSchema.index({ name: 'text', specialty: 'text', bio: 'text' });
-// New ones
-specialistSchema.index({ email: 1 });
 specialistSchema.index({ accountStatus: 1 });
-specialistSchema.index({ specialty: 1, rating: -1 });
 
 // Virtual for formatted experience
 specialistSchema.virtual('formattedExperience').get(function() {
@@ -180,8 +173,4 @@ specialistSchema.set('toJSON', {
   }
 });
 
-
 export default mongoose.model('Specialist', specialistSchema);
-
-
-
