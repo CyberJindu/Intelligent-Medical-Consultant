@@ -3,7 +3,8 @@ import {
   getPersonalizedFeed, 
   getFeedByTopics, 
   saveArticle, 
-  shareArticle 
+  shareArticle,
+  trackView
 } from '../controllers/healthFeedController.js';
 import { authMiddleware } from '../middleware/auth.js';
 import { updateUserTopics } from '../controllers/healthFeedController.js';
@@ -19,6 +20,9 @@ router.get('/personalized', getPersonalizedFeed);
 // Get feed by specific topics
 router.get('/by-topics', getFeedByTopics);
 
+// Track article view - 
+router.post('/articles/:articleId/view', trackView);
+
 // Save article for later
 router.post('/articles/:articleId/save', saveArticle);
 
@@ -29,4 +33,5 @@ router.post('/articles/:articleId/share', shareArticle);
 router.post('/user/topics', updateUserTopics);
 
 export default router;
+
 
