@@ -83,6 +83,16 @@ export const getPersonalizedFeed = async (req, res) => {
 
     // Use GEMINI to intelligently match content to user's conversations
     const geminiAnalysis = await analyzeContentWithGemini(recentConversations, allContent);
+
+    // DEBUG: Check what geminiAnalysis returned
+console.log(`📊 Gemini analysis returned ${geminiAnalysis.length} items`);
+if (geminiAnalysis.length > 0) {
+  console.log('🔍 First analysis item:', {
+    hasContent: !!geminiAnalysis[0].content,
+    contentId: geminiAnalysis[0].content?._id,
+    contentTitle: geminiAnalysis[0].content?.title
+  });
+}
     
     // Sort by Gemini's relevance scores
     const scoredContent = geminiAnalysis.map(item => ({
@@ -232,9 +242,15 @@ Return ONLY the JSON array, no other text.
  * Fallback content analysis when Gemini is unavailable
  */
 const fallbackContentAnalysis = (userTopics, allContent) => {
+  console.log('⚠️ Using fallback content analysis');
   const userTopicSet = new Set(userTopics.map(t => t.toLowerCase()));
   
   return allContent.map(content => {
+    // Log to verify content is valid
+    if (!content || !content._id) {
+      console.log('❌ Invalid content in fallback:', content);
+    }
+    
     let score = 20; // Higher base score
     const contentTopics = [];
     
@@ -272,7 +288,7 @@ const fallbackContentAnalysis = (userTopics, allContent) => {
     else if (daysOld < 90) score += 5;
     
     return {
-      content,
+      content: content, // Explicitly return the original content
       relevanceScore: Math.min(100, score),
       reason: uniqueMatches.length > 0 
         ? `Related to: ${uniqueMatches.slice(0, 3).join(', ')}` 
@@ -773,3 +789,4 @@ const findMatchingTopics = (content, userTopics) => {
   
   return matching;
 };
+
