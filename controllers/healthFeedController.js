@@ -95,12 +95,13 @@ if (geminiAnalysis.length > 0) {
 }
     
     // Sort by Gemini's relevance scores
-    const scoredContent = geminiAnalysis.map(item => ({
-      ...item.content,
-      relevanceScore: item.relevanceScore,
-      relevanceReason: item.reason,
-      matchingTopics: item.matchingTopics
-    }));
+const scoredContent = geminiAnalysis.map(item => {
+  // Attach scores directly to the content object
+  item.content.relevanceScore = item.relevanceScore;
+  item.content.relevanceReason = item.reason;
+  item.content.matchingTopics = item.matchingTopics;
+  return item.content;
+});
 
     // Sort by score and take top 20
     const topContent = scoredContent
@@ -789,4 +790,5 @@ const findMatchingTopics = (content, userTopics) => {
   
   return matching;
 };
+
 
