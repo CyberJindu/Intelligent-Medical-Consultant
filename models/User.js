@@ -4,7 +4,7 @@ const userSchema = new mongoose.Schema({
   phoneNumber: {
     type: String,
     required: true,
-    unique: true,  // ← This creates an index automatically
+    unique: true,  
     trim: true
   },
   name: {
@@ -15,8 +15,8 @@ const userSchema = new mongoose.Schema({
     type: String,
     trim: true,
     lowercase: true,
-    unique: true,  // ← This creates an index automatically
-    sparse: true   // ← Allow multiple null/undefined values
+    unique: true,  
+    sparse: true   
   },
   dateOfBirth: {
     type: Date
@@ -239,3 +239,4 @@ userSchema.set('toJSON', {
 });
 
 export default mongoose.model('User', userSchema);
+
