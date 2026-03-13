@@ -4,6 +4,7 @@ import Specialist from '../models/Specialist.js';
 import model from '../config/gemini.js';
 
 // Get personalized health feed using GEMINI for intelligent matching
+// Get personalized health feed using GEMINI for intelligent matching
 export const getPersonalizedFeed = async (req, res) => {
   try {
     const userId = req.userId;
@@ -27,16 +28,38 @@ export const getPersonalizedFeed = async (req, res) => {
 
     console.log('🎯 User conversation topics:', recentConversations);
 
-    // Get ALL published content
-    const allContent = await GeneratedContent.find({ 
+    // FETCH FROM BOTH COLLECTIONS
+    console.log('📡 Fetching content from both collections...');
+    
+    // 1. Get from GeneratedContent
+    const generatedContent = await GeneratedContent.find({ 
       isPublished: true,
       isActive: true 
     })
     .populate('specialistId', 'name specialty')
     .sort({ generatedAt: -1 })
-    .limit(50); // Get last 50 contents for variety
+    .limit(30);
 
-    console.log('📊 Total available content:', allContent.length);
+    // 2. Get from HealthPost
+    const healthPosts = await HealthPost.find({ 
+      isActive: true 
+    })
+    .sort({ publishDate: -1 })
+    .limit(30);
+
+    console.log(`📊 GeneratedContent: ${generatedContent.length} items`);
+    console.log(`📊 HealthPost: ${healthPosts.length} items`);
+    
+    // Combine both collections
+    let allContent = [...generatedContent, ...healthPosts];
+    
+    // Shuffle to mix content from both sources
+    allContent = allContent.sort(() => Math.random() - 0.5);
+    
+    // Limit total to 50 items
+    allContent = allContent.slice(0, 50);
+    
+    console.log(`📊 TOTAL available content: ${allContent.length} items`);
 
     // If no content, return empty
     if (allContent.length === 0) {
@@ -624,5 +647,6 @@ const findMatchingTopics = (content, userTopics) => {
   
   return matching;
 };
+
 
 
