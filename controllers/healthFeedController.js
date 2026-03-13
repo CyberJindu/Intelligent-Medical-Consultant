@@ -142,13 +142,16 @@ export const getPersonalizedFeed = async (req, res) => {
 const analyzeContentWithGemini = async (userTopics, allContent) => {
   try {
     // Prepare content summaries for Gemini (limit to avoid token limits)
-    const contentSummaries = allContent.slice(0, 30).map((content, index) => ({
-      id: index,
-      title: content.title,
-      topic: content.topic,
-      keywords: content.keywords || [],
-      summary: content.content.substring(0, 200) // First 200 chars
-    }));
+    const contentSummaries = allContent.slice(0, 30).map((content, index) => {
+      const isGenerated = !!content.specialistId;
+      return {
+        id: index,
+        title: content.title || 'Untitled',
+        topic: content.topic || (content.topics ? content.topics[0] : 'health'),
+        keywords: content.keywords || content.topics || [],
+        summary: content.content ? content.content.substring(0, 200) : ''
+      };
+    });
 
     const prompt = `
 You are a medical content recommendation expert. Your task is to match health content to a user based on their conversation history.
@@ -249,11 +252,12 @@ const fallbackContentAnalysis = (userTopics, allContent) => {
 };
 
 /**
- * Format content for feed display
+ * Format content for feed display (works for both GeneratedContent and HealthPost)
  */
 const formatFeedContent = async (contents) => {
-  // Get all specialist IDs
+  // Get all specialist IDs (only for GeneratedContent items)
   const specialistIds = contents
+    .filter(content => content.specialistId) // Only items with specialistId
     .map(content => content.specialistId?._id || content.specialistId)
     .filter(id => id);
   
@@ -268,38 +272,92 @@ const formatFeedContent = async (contents) => {
   });
 
   return contents.map(content => {
-    const specialist = content.specialistId?._id 
-      ? specialistMap[content.specialistId._id.toString()]
-      : specialistMap[content.specialistId?.toString()];
+    // Determine if this is GeneratedContent or HealthPost
+    const isGenerated = !!content.specialistId;
     
-    // Calculate read time
-    const wordCount = content.content ? content.content.split(/\s+/).length : 0;
-    const readTimeMinutes = Math.ceil(wordCount / 200);
+    // Extract fields based on content type
+    const title = content.title || 'Untitled Health Article';
+    const contentText = content.content || '';
+    
+    // Handle date field (different names in each collection)
+    const publishDate = isGenerated ? content.generatedAt : content.publishDate;
+    
+    // Handle author field
+    let author = 'Healthcare Specialist';
+    let authorSpecialty = '';
+    
+    if (isGenerated) {
+      const specialist = content.specialistId?._id 
+        ? specialistMap[content.specialistId._id.toString()]
+        : specialistMap[content.specialistId?.toString()];
+      
+      author = specialist ? `Dr. ${specialist.name}` : (content.authorName || 'Healthcare Specialist');
+      authorSpecialty = specialist?.specialty || content.authorSpecialty || '';
+    } else {
+      author = content.author || 'MediGuide Health Team';
+    }
+    
+    // Calculate read time properly
+    const wordCount = contentText ? contentText.split(/\s+/).length : 0;
+    const readTimeMinutes = Math.max(1, Math.ceil(wordCount / 200));
+    
+    // Create excerpt
+    let excerpt = '';
+    if (content.excerpt && content.excerpt !== '...' && content.excerpt.length > 10) {
+      excerpt = content.excerpt;
+    } else if (contentText) {
+      // Clean markdown and trim
+      const plainText = contentText
+        .replace(/#{1,6}\s?/g, '')
+        .replace(/\*\*(.*?)\*\*/g, '$1')
+        .replace(/\*(.*?)\*/g, '$1')
+        .replace(/\[.*?\]\(.*?\)/g, '')
+        .trim();
+      excerpt = plainText.substring(0, 150) + (plainText.length > 150 ? '...' : '');
+    } else {
+      excerpt = 'Click to read this informative health article';
+    }
     
     // Extract topics
-    const contentTopics = [];
-    if (content.topic) contentTopics.push(content.topic);
-    if (content.keywords && Array.isArray(content.keywords)) {
-      contentTopics.push(...content.keywords);
+    let contentTopics = [];
+    if (isGenerated) {
+      if (content.topic) contentTopics.push(content.topic);
+      if (content.keywords && Array.isArray(content.keywords)) {
+        contentTopics.push(...content.keywords);
+      }
+      if (content.feedTopics && Array.isArray(content.feedTopics)) {
+        contentTopics.push(...content.feedTopics);
+      }
+    } else {
+      if (content.topics && Array.isArray(content.topics)) {
+        contentTopics = content.topics;
+      }
     }
+    
+    // Ensure we have at least one topic
+    if (contentTopics.length === 0) {
+      contentTopics = ['health', 'wellness'];
+    }
+    
+    // Remove duplicates and limit
+    const uniqueTopics = [...new Set(contentTopics)].slice(0, 5);
     
     return {
       _id: content._id,
-      title: content.title,
-      content: content.content,
-      excerpt: content.content 
-        ? content.content.substring(0, 200) + (content.content.length > 200 ? '...' : '')
-        : '',
-      author: specialist ? `Dr. ${specialist.name}` : 'Healthcare Specialist',
-      authorType: 'verified_specialist',
-      authorSpecialty: specialist?.specialty || '',
-      publishDate: content.generatedAt,
+      title: title,
+      content: contentText,
+      excerpt: excerpt,
+      author: author,
+      authorType: isGenerated ? 'verified_specialist' : 'health_team',
+      authorSpecialty: authorSpecialty,
+      publishDate: publishDate || new Date(),
       readTime: `${readTimeMinutes} min read`,
-      topics: [...new Set(contentTopics)].slice(0, 5),
+      topics: uniqueTopics,
       relevanceScore: content.relevanceScore || 50,
       relevanceReason: content.relevanceReason || '',
       matchingTopics: content.matchingTopics || [],
-      isSpecialistContent: true
+      isSpecialistContent: isGenerated,
+      source: isGenerated ? 'generated' : 'healthpost'
     };
   });
 };
@@ -648,6 +706,7 @@ const findMatchingTopics = (content, userTopics) => {
   
   return matching;
 };
+
 
 
 
