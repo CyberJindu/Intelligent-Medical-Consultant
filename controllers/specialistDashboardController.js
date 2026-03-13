@@ -43,27 +43,23 @@ export const getPerformanceStats = async (req, res) => {
       }
     ]);
 
-    // Calculate engagement metrics (you'll need to add these fields to GeneratedContent model)
-    const engagementStats = await GeneratedContent.aggregate([
-      {
-        $match: {
-          specialistId: new mongoose.Types.ObjectId(specialistId),
-          isPublished: true
-        }
-      },
-      {
-        $group: {
-          _id: null,
-          // TODO: Add these fields to GeneratedContent model
-          // totalViews: { $sum: "$views" },
-          // totalLikes: { $sum: "$likes" },
-          // totalShares: { $sum: "$shares" }
-          totalViews: { $sum: 0 }, // Placeholder
-          totalLikes: { $sum: 0 }, // Placeholder
-          totalShares: { $sum: 0 }  // Placeholder
-        }
-      }
-    ]);
+// Calculate engagement metrics
+const engagementStats = await GeneratedContent.aggregate([
+  {
+    $match: {
+      specialistId: new mongoose.Types.ObjectId(specialistId),
+      isPublished: true
+    }
+  },
+  {
+    $group: {
+      _id: null,
+      totalViews: { $sum: "$views" },  
+      totalLikes: { $sum: "$likes" },  
+      totalShares: { $sum: "$shares" }  
+    }
+  }
+]);
 
     const stats = contentStats[0] || {
       totalContent: 0,
