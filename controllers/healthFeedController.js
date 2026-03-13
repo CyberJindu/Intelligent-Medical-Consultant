@@ -1,134 +1,103 @@
 import GeneratedContent from '../models/GeneratedContent.js';
 import User from '../models/User.js';
 import Specialist from '../models/Specialist.js';
+import model from '../config/gemini.js';
 
-// Get personalized health feed DIRECTLY from GeneratedContent
+// Get personalized health feed using GEMINI for intelligent matching
 export const getPersonalizedFeed = async (req, res) => {
   try {
     const userId = req.userId;
     
-    // Get user's topics for personalization
+    // Get user with their conversation topics
     const user = await User.findById(userId);
-    const userTopics = user ? user.getTopHealthInterests(5).map(interest => interest.topic) : [];
     
-    console.log('🎯 User topics for personalization:', userTopics);
-    
-    // Build query based on user topics
-    let query = { isPublished: true };
-    
-    if (userTopics.length > 0) {
-      query.$or = [
-        { topic: { $in: userTopics } },
-        { keywords: { $in: userTopics } },
-        { 
-          $or: userTopics.map(topic => ({
-            title: { $regex: topic, $options: 'i' }
-          }))
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    // Get user's conversation topics (the raw material for Gemini)
+    const conversationTopics = user.conversationTopics || [];
+    const recentConversations = conversationTopics
+      .sort((a, b) => b.lastMentioned - a.lastMentioned)
+      .slice(0, 15) // Get last 15 topics
+      .map(t => t.topic);
+
+    console.log('🎯 User conversation topics:', recentConversations);
+
+    // Get ALL published content
+    const allContent = await GeneratedContent.find({ 
+      isPublished: true,
+      isActive: true 
+    })
+    .populate('specialistId', 'name specialty')
+    .sort({ generatedAt: -1 })
+    .limit(50); // Get last 50 contents for variety
+
+    console.log('📊 Total available content:', allContent.length);
+
+    // If no content, return empty
+    if (allContent.length === 0) {
+      return res.status(200).json({
+        success: true,
+        data: { 
+          feed: [],
+          message: 'No content available yet'
         }
-      ];
+      });
     }
-    
-    console.log('🔍 Query:', JSON.stringify(query, null, 2));
-    
-    // Fetch content - ONLY SELECT FIELDS THAT ACTUALLY EXIST
-    const feed = await GeneratedContent.find(query)
-      .populate('specialistId', 'name specialty')
-      .select('title content contentType topic targetAudience tone wordCount keywords generatedAt lastModified isPublished')
-      .sort({ generatedAt: -1 })
-      .limit(20);
 
-    console.log('📊 Found', feed.length, 'contents for feed');
-    
-    // If NO contents found with topic matching, GET ALL published contents as fallback
-    let contentsToShow = feed;
-    if (feed.length === 0) {
-      console.log('🔄 No topic matches found, falling back to ALL published contents');
-      contentsToShow = await GeneratedContent.find({ isPublished: true })
-        .populate('specialistId', 'name specialty')
-        .select('title content contentType topic targetAudience tone wordCount keywords generatedAt lastModified isPublished')
-        .sort({ generatedAt: -1 })
-        .limit(20);
-      console.log('📊 Fallback - Total published contents:', contentsToShow.length);
+    // If user has no conversation history, show most recent content
+    if (recentConversations.length === 0) {
+      const formattedFeed = await formatFeedContent(allContent.slice(0, 20));
+      
+      return res.status(200).json({
+        success: true,
+        data: { 
+          feed: formattedFeed,
+          generatedAt: new Date(),
+          personalizationLevel: 'low',
+          message: 'Showing latest content. Start chatting to get personalized recommendations!'
+        }
+      });
     }
-    
-    // Get specialist names for all contents
-    const specialistIds = [...new Set(contentsToShow.map(content => content.specialistId))];
-    const specialists = await Specialist.find({ _id: { $in: specialistIds } })
-      .select('name specialty')
-      .lean();
-    
-    const specialistMap = {};
-    specialists.forEach(spec => {
-      specialistMap[spec._id.toString()] = spec;
-    });
-    
-    // Format for feed display - USE ONLY ACTUAL FIELDS
-    const formattedFeed = contentsToShow.map((content) => {
-      const relevanceScore = calculateRelevanceScore(content, userTopics);
-      const matchingTopics = findMatchingTopics(content, userTopics);
-      
-      const specialist = specialistMap[content.specialistId?._id?.toString() || content.specialistId?.toString()];
-      
-      // Calculate read time from content length
-      const wordCount = content.content ? content.content.split(/\s+/).length : 0;
-      const readTimeMinutes = Math.ceil(wordCount / 200);
-      
-      // Create topics array from actual fields
-      const contentTopics = [];
-      if (content.topic) contentTopics.push(content.topic.toLowerCase());
-      if (content.keywords && Array.isArray(content.keywords)) {
-        content.keywords.forEach(kw => {
-          if (kw && typeof kw === 'string') contentTopics.push(kw.toLowerCase());
-        });
-      }
-      if (content.contentType) contentTopics.push(content.contentType.toLowerCase().replace('_', ' '));
-      
-      // Add common health categories
-      const healthCategories = ['health', 'wellness', 'medical'];
-      healthCategories.forEach(cat => contentTopics.push(cat));
-      
-      // Remove duplicates and limit
-      const uniqueTopics = [...new Set(contentTopics)].slice(0, 6);
-      
-      return {
-        _id: content._id,
-        title: content.title,
-        content: content.content,
-        excerpt: content.content ? content.content.substring(0, 200) + (content.content.length > 200 ? '...' : '') : '',
-        author: specialist ? `Dr. ${specialist.name}` : 'Healthcare Specialist',
-        authorType: 'verified_specialist',
-        publishDate: content.generatedAt,
-        readTime: `${readTimeMinutes} min read`,
-        topics: uniqueTopics,
-        specialistSpecialty: specialist?.specialty || '',
-        isSpecialistContent: true,
-        relevanceScore,
-        matchingTopics,
-        matchPercentage: Math.round((matchingTopics.length / Math.max(userTopics.length, 1)) * 100),
-        // Add debug info
-        userTopics: userTopics,
-        contentTopic: content.topic,
-        contentKeywords: content.keywords,
-        queryUsed: feed.length === 0 ? 'fallback_all_published' : 'topic_matched'
-      };
-    });
 
-    // Sort by relevance
-    formattedFeed.sort((a, b) => b.relevanceScore - a.relevanceScore);
+    // Use GEMINI to intelligently match content to user's conversations
+    const geminiAnalysis = await analyzeContentWithGemini(recentConversations, allContent);
+    
+    // Sort by Gemini's relevance scores
+    const scoredContent = geminiAnalysis.map(item => ({
+      ...item.content,
+      relevanceScore: item.relevanceScore,
+      relevanceReason: item.reason,
+      matchingTopics: item.matchingTopics
+    }));
+
+    // Sort by score and take top 20
+    const topContent = scoredContent
+      .sort((a, b) => b.relevanceScore - a.relevanceScore)
+      .slice(0, 20);
+
+    // Format for feed display
+    const formattedFeed = await formatFeedContent(topContent);
 
     res.status(200).json({
       success: true,
       data: { 
         feed: formattedFeed,
         generatedAt: new Date(),
-        personalizationLevel: userTopics.length > 0 ? 'high' : 'medium',
-        userTopicsCount: userTopics.length,
-        feedSource: 'generated_content',
-        totalContents: contentsToShow.length,
-        matchedByTopic: feed.length,
+        personalizationLevel: 'high',
+        totalAnalyzed: allContent.length,
+        userTopicsCount: recentConversations.length,
         debug: {
-          queryUsed: feed.length === 0 ? 'fallback (no topic matches)' : 'topic matching',
-          userTopics: userTopics
+          userTopics: recentConversations,
+          geminiScores: geminiAnalysis.map(a => ({ 
+            title: a.content.title, 
+            score: a.relevanceScore,
+            reason: a.reason 
+          }))
         }
       }
     });
@@ -142,6 +111,175 @@ export const getPersonalizedFeed = async (req, res) => {
     });
   }
 };
+
+/**
+ * Use Gemini to analyze content relevance based on user conversations
+ */
+const analyzeContentWithGemini = async (userTopics, allContent) => {
+  try {
+    // Prepare content summaries for Gemini (limit to avoid token limits)
+    const contentSummaries = allContent.slice(0, 30).map((content, index) => ({
+      id: index,
+      title: content.title,
+      topic: content.topic,
+      keywords: content.keywords || [],
+      summary: content.content.substring(0, 200) // First 200 chars
+    }));
+
+    const prompt = `
+You are a medical content recommendation expert. Your task is to match health content to a user based on their conversation history.
+
+USER'S CONVERSATION TOPICS (what they've discussed):
+${userTopics.map(t => `- ${t}`).join('\n')}
+
+AVAILABLE CONTENT (each with ID, title, topic, keywords, and summary):
+${JSON.stringify(contentSummaries, null, 2)}
+
+Analyze each piece of content and determine how relevant it is to the user's conversation topics. Consider:
+- Direct topic matches (if they discussed headaches, headache articles are highly relevant)
+- Related topics (if they discussed stress, anxiety articles might be relevant)
+- User's likely interests based on conversation patterns
+- Educational value and appropriateness
+
+Return a JSON array with objects containing:
+- contentId: number (the id field from above)
+- relevanceScore: number (0-100, how relevant this content is to the user)
+- reason: string (brief explanation of why this content matches)
+- matchingTopics: array of strings (which user topics this content matches)
+
+Be thoughtful and intelligent in your matching. Some content might be relevant even without exact keyword matches.
+
+Return ONLY the JSON array, no other text.
+`;
+
+    const result = await model.generateContent(prompt);
+    const response = await result.response;
+    const text = response.text();
+
+    // Extract JSON array
+    const jsonMatch = text.match(/\[[\s\S]*\]/);
+    if (jsonMatch) {
+      const analysis = JSON.parse(jsonMatch[0]);
+      
+      // Map back to actual content objects
+      return analysis.map(item => ({
+        content: allContent[item.contentId],
+        relevanceScore: item.relevanceScore,
+        reason: item.reason,
+        matchingTopics: item.matchingTopics || []
+      }));
+    }
+
+    // Fallback if Gemini fails
+    return fallbackContentAnalysis(userTopics, allContent);
+
+  } catch (error) {
+    console.error('Gemini content analysis error:', error);
+    
+    // If Gemini is overloaded, use fallback
+    if (error.message.includes('503') || error.message.includes('overloaded')) {
+      console.log('⚠️ Gemini overloaded, using fallback analysis');
+      return fallbackContentAnalysis(userTopics, allContent);
+    }
+    
+    return fallbackContentAnalysis(userTopics, allContent);
+  }
+};
+
+/**
+ * Fallback content analysis when Gemini is unavailable
+ */
+const fallbackContentAnalysis = (userTopics, allContent) => {
+  const userTopicSet = new Set(userTopics.map(t => t.toLowerCase()));
+  
+  return allContent.map(content => {
+    let score = 10; // Base score
+    const contentTopics = [];
+    
+    if (content.topic) contentTopics.push(content.topic.toLowerCase());
+    if (content.keywords) contentTopics.push(...content.keywords.map(k => k.toLowerCase()));
+    
+    // Count matches
+    const matches = contentTopics.filter(topic => 
+      Array.from(userTopicSet).some(userTopic => 
+        topic.includes(userTopic) || userTopic.includes(topic)
+      )
+    );
+    
+    score += matches.length * 15;
+    
+    // Recency bonus
+    const daysOld = (Date.now() - new Date(content.generatedAt)) / (1000 * 60 * 60 * 24);
+    if (daysOld < 7) score += 20;
+    else if (daysOld < 30) score += 10;
+    
+    return {
+      content,
+      relevanceScore: Math.min(100, score),
+      reason: matches.length > 0 
+        ? `Matches topics: ${matches.join(', ')}` 
+        : 'General health content',
+      matchingTopics: matches
+    };
+  });
+};
+
+/**
+ * Format content for feed display
+ */
+const formatFeedContent = async (contents) => {
+  // Get all specialist IDs
+  const specialistIds = contents
+    .map(content => content.specialistId?._id || content.specialistId)
+    .filter(id => id);
+  
+  // Fetch specialist details
+  const specialists = await Specialist.find({ _id: { $in: specialistIds } })
+    .select('name specialty')
+    .lean();
+  
+  const specialistMap = {};
+  specialists.forEach(spec => {
+    specialistMap[spec._id.toString()] = spec;
+  });
+
+  return contents.map(content => {
+    const specialist = content.specialistId?._id 
+      ? specialistMap[content.specialistId._id.toString()]
+      : specialistMap[content.specialistId?.toString()];
+    
+    // Calculate read time
+    const wordCount = content.content ? content.content.split(/\s+/).length : 0;
+    const readTimeMinutes = Math.ceil(wordCount / 200);
+    
+    // Extract topics
+    const contentTopics = [];
+    if (content.topic) contentTopics.push(content.topic);
+    if (content.keywords && Array.isArray(content.keywords)) {
+      contentTopics.push(...content.keywords);
+    }
+    
+    return {
+      _id: content._id,
+      title: content.title,
+      content: content.content,
+      excerpt: content.content 
+        ? content.content.substring(0, 200) + (content.content.length > 200 ? '...' : '')
+        : '',
+      author: specialist ? `Dr. ${specialist.name}` : 'Healthcare Specialist',
+      authorType: 'verified_specialist',
+      authorSpecialty: specialist?.specialty || '',
+      publishDate: content.generatedAt,
+      readTime: `${readTimeMinutes} min read`,
+      topics: [...new Set(contentTopics)].slice(0, 5),
+      relevanceScore: content.relevanceScore || 50,
+      relevanceReason: content.relevanceReason || '',
+      matchingTopics: content.matchingTopics || [],
+      isSpecialistContent: true
+    };
+  });
+};
+
 
 // Get feed by specific topics
 export const getFeedByTopics = async (req, res) => {
@@ -450,3 +588,4 @@ const findMatchingTopics = (content, userTopics) => {
   
   return matching;
 };
+
