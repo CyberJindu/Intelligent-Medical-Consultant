@@ -382,6 +382,42 @@ export const getFeedByTopics = async (req, res) => {
   }
 };
 
+// Track article view
+export const trackView = async (req, res) => {
+  try {
+    const { articleId } = req.params;
+    const userId = req.userId;
+
+    const article = await GeneratedContent.findById(articleId);
+    
+    if (!article) {
+      return res.status(404).json({
+        success: false,
+        message: 'Article not found'
+      });
+    }
+
+    // Use the model's incrementView method
+    await article.incrementView(userId);
+
+    res.status(200).json({
+      success: true,
+      message: 'View tracked successfully',
+      data: {
+        views: article.views
+      }
+    });
+
+  } catch (error) {
+    console.error('Track view error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to track view',
+      error: error.message
+    });
+  }
+};
+
 // Save article for later
 export const saveArticle = async (req, res) => {
   try {
@@ -588,4 +624,5 @@ const findMatchingTopics = (content, userTopics) => {
   
   return matching;
 };
+
 
