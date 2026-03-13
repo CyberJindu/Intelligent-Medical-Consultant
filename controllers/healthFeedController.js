@@ -1,4 +1,5 @@
 import GeneratedContent from '../models/GeneratedContent.js';
+import HealthPost from '../models/HealthPost.js';
 import User from '../models/User.js';
 import Specialist from '../models/Specialist.js';
 import model from '../config/gemini.js';
@@ -647,6 +648,7 @@ const findMatchingTopics = (content, userTopics) => {
   
   return matching;
 };
+
 
 
 
