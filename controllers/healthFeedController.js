@@ -5,7 +5,6 @@ import Specialist from '../models/Specialist.js';
 import model from '../config/gemini.js';
 
 // Get personalized health feed using GEMINI for intelligent matching
-// Get personalized health feed using GEMINI for intelligent matching
 export const getPersonalizedFeed = async (req, res) => {
   try {
     const userId = req.userId;
@@ -24,43 +23,38 @@ export const getPersonalizedFeed = async (req, res) => {
     const conversationTopics = user.conversationTopics || [];
     const recentConversations = conversationTopics
       .sort((a, b) => b.lastMentioned - a.lastMentioned)
-      .slice(0, 15) // Get last 15 topics
+      .slice(0, 15)
       .map(t => t.topic);
 
     console.log('🎯 User conversation topics:', recentConversations);
 
-    // FETCH FROM BOTH COLLECTIONS
-    console.log('📡 Fetching content from both collections...');
+    // FETCH FROM BOTH COLLECTIONS - NO FILTERS, GET EVERYTHING!
+    console.log('📡 Fetching ALL content from both collections...');
     
-    // 1. Get from GeneratedContent
-    const generatedContent = await GeneratedContent.find({ 
-      isPublished: true,
-      isActive: true 
-    })
-    .populate('specialistId', 'name specialty')
-    .sort({ generatedAt: -1 })
-    .limit(30);
+    // 1. Get ALL GeneratedContent (both published and drafts)
+    const generatedContent = await GeneratedContent.find({})
+      .populate('specialistId', 'name specialty')
+      .sort({ generatedAt: -1 })
+      .limit(50); // Increased limit to get more content
 
-    // 2. Get from HealthPost
-    const healthPosts = await HealthPost.find({ 
-      isActive: true 
-    })
-    .sort({ publishDate: -1 })
-    .limit(30);
+    // 2. Get ALL HealthPost (both active and inactive)
+    const healthPosts = await HealthPost.find({})
+      .sort({ publishDate: -1 })
+      .limit(50);
 
-    console.log(`📊 GeneratedContent: ${generatedContent.length} items`);
-    console.log(`📊 HealthPost: ${healthPosts.length} items`);
+    console.log(`📊 GeneratedContent: ${generatedContent.length} items total`);
+    console.log(`📊 HealthPost: ${healthPosts.length} items total`);
     
     // Combine both collections
     let allContent = [...generatedContent, ...healthPosts];
     
-    // Shuffle to mix content from both sources
-    allContent = allContent.sort(() => Math.random() - 0.5);
-    
-    // Limit total to 50 items
-    allContent = allContent.slice(0, 50);
-    
+    // Log what we got
     console.log(`📊 TOTAL available content: ${allContent.length} items`);
+    
+    // Separate by publish status for debugging
+    const publishedGen = generatedContent.filter(c => c.isPublished === true).length;
+    const draftGen = generatedContent.filter(c => c.isPublished === false).length;
+    console.log(`📊 GeneratedContent breakdown: ${publishedGen} published, ${draftGen} drafts`);
 
     // If no content, return empty
     if (allContent.length === 0) {
@@ -141,29 +135,34 @@ export const getPersonalizedFeed = async (req, res) => {
  */
 const analyzeContentWithGemini = async (userTopics, allContent) => {
   try {
-    // Prepare content summaries for Gemini (limit to avoid token limits)
-    const contentSummaries = allContent.slice(0, 30).map((content, index) => {
-  const isGenerated = !!content.specialistId;
-  
-  // Extract topics based on content type
-  let topics = [];
-  if (isGenerated) {
-    topics = [
-      content.topic,
-      ...(content.keywords || [])
-    ].filter(Boolean);
-  } else {
-    topics = content.topics || [];
-  }
-  
-  return {
-    id: index,
-    title: content.title || 'Health Article',
-    topic: topics[0] || 'health',
-    keywords: topics,
-    summary: content.content ? content.content.substring(0, 200) : ''
-  };
-});
+    // Prepare content summaries for Gemini
+    const contentSummaries = allContent.slice(0, 40).map((content, index) => {
+      const isGenerated = !!content.specialistId;
+      
+      // Extract topics based on content type
+      let topics = [];
+      if (isGenerated) {
+        topics = [
+          content.topic,
+          ...(content.keywords || [])
+        ].filter(Boolean);
+      } else {
+        topics = content.topics || [];
+      }
+      
+      // If no topics found, use title words as fallback
+      if (topics.length === 0 && content.title) {
+        topics = content.title.split(' ').filter(word => word.length > 3);
+      }
+      
+      return {
+        id: index,
+        title: content.title || 'Health Article',
+        topic: topics[0] || 'health',
+        keywords: topics,
+        summary: content.content ? content.content.substring(0, 200) : ''
+      };
+    });
 
     const prompt = `
 You are a medical content recommendation expert. Your task is to match health content to a user based on their conversation history.
@@ -175,18 +174,16 @@ AVAILABLE CONTENT (each with ID, title, topic, keywords, and summary):
 ${JSON.stringify(contentSummaries, null, 2)}
 
 Analyze each piece of content and determine how relevant it is to the user's conversation topics. Consider:
-- Direct topic matches (if they discussed headaches, headache articles are highly relevant)
-- Related topics (if they discussed stress, anxiety articles might be relevant)
-- User's likely interests based on conversation patterns
-- Educational value and appropriateness
+- Direct topic matches
+- Related medical concepts
+- User's likely interests
+- Educational value
 
 Return a JSON array with objects containing:
 - contentId: number (the id field from above)
-- relevanceScore: number (0-100, how relevant this content is to the user)
-- reason: string (brief explanation of why this content matches)
+- relevanceScore: number (0-100)
+- reason: string (brief explanation)
 - matchingTopics: array of strings (which user topics this content matches)
-
-Be thoughtful and intelligent in your matching. Some content might be relevant even without exact keyword matches.
 
 Return ONLY the JSON array, no other text.
 `;
@@ -195,32 +192,32 @@ Return ONLY the JSON array, no other text.
     const response = await result.response;
     const text = response.text();
 
-    // Extract JSON array
+    // Extract JSON array with better error handling
     const jsonMatch = text.match(/\[[\s\S]*\]/);
     if (jsonMatch) {
-      const analysis = JSON.parse(jsonMatch[0]);
-      
-      // Map back to actual content objects
-      return analysis.map(item => ({
-        content: allContent[item.contentId],
-        relevanceScore: item.relevanceScore,
-        reason: item.reason,
-        matchingTopics: item.matchingTopics || []
-      }));
+      try {
+        const analysis = JSON.parse(jsonMatch[0]);
+        
+        // Validate and clean the analysis
+        return analysis
+          .filter(item => item && typeof item.relevanceScore === 'number')
+          .map(item => ({
+            content: allContent[item.contentId],
+            relevanceScore: Math.min(100, Math.max(0, item.relevanceScore)),
+            reason: item.reason || 'Matches your interests',
+            matchingTopics: item.matchingTopics || []
+          }));
+      } catch (parseError) {
+        console.error('❌ Failed to parse Gemini JSON:', parseError);
+        console.log('📝 Raw response:', text.substring(0, 300));
+        return fallbackContentAnalysis(userTopics, allContent);
+      }
     }
 
-    // Fallback if Gemini fails
     return fallbackContentAnalysis(userTopics, allContent);
 
   } catch (error) {
     console.error('Gemini content analysis error:', error);
-    
-    // If Gemini is overloaded, use fallback
-    if (error.message.includes('503') || error.message.includes('overloaded')) {
-      console.log('⚠️ Gemini overloaded, using fallback analysis');
-      return fallbackContentAnalysis(userTopics, allContent);
-    }
-    
     return fallbackContentAnalysis(userTopics, allContent);
   }
 };
@@ -232,33 +229,49 @@ const fallbackContentAnalysis = (userTopics, allContent) => {
   const userTopicSet = new Set(userTopics.map(t => t.toLowerCase()));
   
   return allContent.map(content => {
-    let score = 10; // Base score
+    let score = 20; // Higher base score
     const contentTopics = [];
     
+    // Extract topics from title
+    if (content.title) {
+      content.title.toLowerCase().split(' ').forEach(word => {
+        if (word.length > 3) contentTopics.push(word);
+      });
+    }
+    
+    // Add content-specific topics
     if (content.topic) contentTopics.push(content.topic.toLowerCase());
     if (content.keywords) contentTopics.push(...content.keywords.map(k => k.toLowerCase()));
+    if (content.topics) contentTopics.push(...content.topics.map(t => t.toLowerCase()));
     
-    // Count matches
-    const matches = contentTopics.filter(topic => 
-      Array.from(userTopicSet).some(userTopic => 
-        topic.includes(userTopic) || userTopic.includes(topic)
-      )
-    );
+    // Count semantic matches
+    const matches = [];
+    contentTopics.forEach(topic => {
+      userTopics.forEach(userTopic => {
+        const userTopicLower = userTopic.toLowerCase();
+        if (topic.includes(userTopicLower) || userTopicLower.includes(topic)) {
+          matches.push(userTopic);
+        }
+      });
+    });
     
-    score += matches.length * 15;
+    const uniqueMatches = [...new Set(matches)];
+    score += uniqueMatches.length * 15;
     
     // Recency bonus
-    const daysOld = (Date.now() - new Date(content.generatedAt)) / (1000 * 60 * 60 * 24);
-    if (daysOld < 7) score += 20;
-    else if (daysOld < 30) score += 10;
+    const publishDate = content.generatedAt || content.publishDate || new Date();
+    const daysOld = (Date.now() - new Date(publishDate)) / (1000 * 60 * 60 * 24);
+    if (daysOld < 7) score += 25;
+    else if (daysOld < 30) score += 15;
+    else if (daysOld < 90) score += 5;
     
     return {
       content,
       relevanceScore: Math.min(100, score),
-      reason: matches.length > 0 
-        ? `Matches topics: ${matches.join(', ')}` 
+      reason: uniqueMatches.length > 0 
+        ? `Related to: ${uniqueMatches.slice(0, 3).join(', ')}` 
         : 'General health content',
-      matchingTopics: matches
+      matchingTopics: uniqueMatches
     };
   });
 };
@@ -269,9 +282,9 @@ const fallbackContentAnalysis = (userTopics, allContent) => {
 const formatFeedContent = async (contents) => {
   console.log(`🎨 Formatting ${contents.length} contents for feed`);
 
-  // First, separate content by type to handle them appropriately
-  const generatedItems = contents.filter(c => c.specialistId); // Has specialistId = GeneratedContent
-  const healthPostItems = contents.filter(c => !c.specialistId); // No specialistId = HealthPost
+  // First, separate content by type
+  const generatedItems = contents.filter(c => c.specialistId);
+  const healthPostItems = contents.filter(c => !c.specialistId);
   
   console.log(`📊 Found ${generatedItems.length} GeneratedContent items, ${healthPostItems.length} HealthPost items`);
 
@@ -320,23 +333,27 @@ const formatFeedContent = async (contents) => {
     if (content.keywords && Array.isArray(content.keywords)) {
       contentTopics.push(...content.keywords);
     }
+    if (content.feedTopics && Array.isArray(content.feedTopics)) {
+      contentTopics.push(...content.feedTopics);
+    }
     
     formatted.push({
       _id: content._id,
       title: content.title || 'Health Article',
       content: content.content || '',
-      excerpt: excerpt || 'Click to read this informative health article',
+      excerpt: excerpt || content.content?.substring(0, 150) + '...' || 'Click to read',
       author: specialist ? `Dr. ${specialist.name}` : (content.authorName || 'Healthcare Specialist'),
       authorType: 'verified_specialist',
       authorSpecialty: specialist?.specialty || content.authorSpecialty || '',
       publishDate: content.generatedAt || new Date(),
-      readTime: `${readTimeMinutes} min read`,
+      readTime: content.readTime || `${readTimeMinutes} min read`,
       topics: [...new Set(contentTopics)].slice(0, 5),
       relevanceScore: content.relevanceScore || 50,
       relevanceReason: content.relevanceReason || '',
       matchingTopics: content.matchingTopics || [],
       isSpecialistContent: true,
-      source: 'generated'
+      source: 'generated',
+      isPublished: content.isPublished // Include publish status for debugging
     });
   }
 
@@ -362,12 +379,12 @@ const formatFeedContent = async (contents) => {
       _id: content._id,
       title: content.title || 'Health Article',
       content: content.content || '',
-      excerpt: excerpt || 'Click to read this informative health article',
+      excerpt: excerpt || content.content?.substring(0, 150) + '...' || 'Click to read',
       author: content.author || 'MediGuide Health Team',
       authorType: 'health_team',
       authorSpecialty: '',
       publishDate: content.publishDate || new Date(),
-      readTime: `${readTimeMinutes} min read`,
+      readTime: content.readTime || `${readTimeMinutes} min read`,
       topics: (content.topics && Array.isArray(content.topics)) ? content.topics.slice(0, 5) : ['health', 'wellness'],
       relevanceScore: content.relevanceScore || 50,
       relevanceReason: content.relevanceReason || '',
@@ -377,10 +394,9 @@ const formatFeedContent = async (contents) => {
     });
   }
 
-  // Shuffle to mix content types
-  return formatted.sort(() => Math.random() - 0.5);
+  // Sort by relevance score (higher first)
+  return formatted.sort((a, b) => b.relevanceScore - a.relevanceScore);
 };
-
 
 // Get feed by specific topics
 export const getFeedByTopics = async (req, res) => {
@@ -403,18 +419,17 @@ export const getFeedByTopics = async (req, res) => {
         user.conversationTopics?.some(ct => ct.topic.includes(topic))
       ) : false;
     
-    // Fetch DIRECTLY from GeneratedContent - SIMPLE QUERY
+    // Fetch from GeneratedContent - GET ALL, not just published
     const feed = await GeneratedContent.find({
-      isPublished: true,
       $or: [
         { topic: { $in: topicArray } },
-        { keywords: { $in: topicArray } }
+        { keywords: { $in: topicArray } },
+        { title: { $regex: topicArray.join('|'), $options: 'i' } }
       ]
     })
     .populate('specialistId', 'name specialty')
-    .select('title content topic keywords generatedAt')
     .sort({ generatedAt: -1 })
-    .limit(15);
+    .limit(20);
 
     // Get specialist names
     const specialistIds = [...new Set(feed.map(content => content.specialistId))];
@@ -446,17 +461,18 @@ export const getFeedByTopics = async (req, res) => {
         title: content.title,
         content: content.content,
         excerpt: content.content ? content.content.substring(0, 200) + '...' : '',
-        author: specialist ? `Dr. ${specialist.name}` : 'Healthcare Specialist',
+        author: specialist ? `Dr. ${specialist.name}` : (content.authorName || 'Healthcare Specialist'),
         authorType: 'verified_specialist',
         publishDate: content.generatedAt,
-        readTime: `${Math.ceil(content.content?.length / 1000) || 5} min read`,
-        topics: contentTopics,
-        specialistSpecialty: specialist?.specialty || '',
+        readTime: content.readTime || `${Math.ceil(content.content?.length / 1000) || 5} min read`,
+        topics: contentTopics.slice(0, 5),
+        specialistSpecialty: specialist?.specialty || content.authorSpecialty || '',
         isSpecialistContent: true,
         relevanceScore,
         matchingTopics: topicArray.filter(topic => 
-          content.topic?.includes(topic) || 
-          content.keywords?.includes(topic)
+          content.topic?.toLowerCase().includes(topic.toLowerCase()) || 
+          content.keywords?.some(k => k.toLowerCase().includes(topic.toLowerCase())) ||
+          content.title?.toLowerCase().includes(topic.toLowerCase())
         ).map(topic => ({ postTopic: topic, userTopic: topic, exactMatch: true }))
       };
     });
@@ -498,7 +514,6 @@ export const trackView = async (req, res) => {
       });
     }
 
-    // Use the model's incrementView method
     await article.incrementView(userId);
 
     res.status(200).json({
@@ -534,11 +549,9 @@ export const saveArticle = async (req, res) => {
       });
     }
 
-    // Increment save count
     article.saveCount = (article.saveCount || 0) + 1;
     await article.save();
 
-    // Update user's interests
     const user = await User.findById(userId);
     if (user && article.topic) {
       const newTopics = [{
@@ -588,7 +601,6 @@ export const updateUserTopics = async (req, res) => {
       });
     }
     
-    // Format topics for storage
     const formattedTopics = topics.map(topic => ({
       topic: topic.toLowerCase(),
       category: 'wellness',
@@ -596,7 +608,6 @@ export const updateUserTopics = async (req, res) => {
       context: context || 'From conversation'
     }));
     
-    // Save to user's conversationTopics
     await user.updateConversationTopics(formattedTopics, context);
     
     console.log(`✅ Saved ${topics.length} topics for user ${userId}`);
@@ -635,11 +646,9 @@ export const shareArticle = async (req, res) => {
       });
     }
 
-    // Increment share count
     article.shares = (article.shares || 0) + 1;
     await article.save();
 
-    // Track user engagement
     const user = await User.findById(userId);
     if (user) {
       user.contentEngagement.push({
@@ -675,11 +684,15 @@ export const shareArticle = async (req, res) => {
 const calculateRelevanceScore = (content, userTopics) => {
   let score = 0;
   
-  // Topic matching
   const contentTopics = [];
   if (content.topic) contentTopics.push(content.topic);
   if (content.keywords && Array.isArray(content.keywords)) {
     contentTopics.push(...content.keywords);
+  }
+  if (content.title) {
+    content.title.toLowerCase().split(' ').forEach(word => {
+      if (word.length > 3) contentTopics.push(word);
+    });
   }
   
   const matchingTopics = contentTopics.filter(topic => 
@@ -689,11 +702,10 @@ const calculateRelevanceScore = (content, userTopics) => {
     )
   );
   
-  score += Math.min(matchingTopics.length * 20, 60);
+  score += Math.min(matchingTopics.length * 15, 60);
   
-  // Recency (40 points max)
-  const daysOld = (new Date() - content.generatedAt) / (1000 * 60 * 60 * 24);
-  score += Math.max(0, 40 - (daysOld * 2));
+  const daysOld = (new Date() - (content.generatedAt || content.publishDate || new Date())) / (1000 * 60 * 60 * 24);
+  score += Math.max(0, 40 - (daysOld * 1.5));
   
   return Math.round(Math.min(score, 100));
 };
@@ -706,6 +718,11 @@ const findMatchingTopics = (content, userTopics) => {
   if (content.topic) contentTopics.push(content.topic);
   if (content.keywords && Array.isArray(content.keywords)) {
     contentTopics.push(...content.keywords);
+  }
+  if (content.title) {
+    content.title.toLowerCase().split(' ').forEach(word => {
+      if (word.length > 3) contentTopics.push(word);
+    });
   }
   
   const matching = [];
@@ -725,9 +742,3 @@ const findMatchingTopics = (content, userTopics) => {
   
   return matching;
 };
-
-
-
-
-
-
