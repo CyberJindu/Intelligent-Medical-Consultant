@@ -143,15 +143,27 @@ const analyzeContentWithGemini = async (userTopics, allContent) => {
   try {
     // Prepare content summaries for Gemini (limit to avoid token limits)
     const contentSummaries = allContent.slice(0, 30).map((content, index) => {
-      const isGenerated = !!content.specialistId;
-      return {
-        id: index,
-        title: content.title || 'Untitled',
-        topic: content.topic || (content.topics ? content.topics[0] : 'health'),
-        keywords: content.keywords || content.topics || [],
-        summary: content.content ? content.content.substring(0, 200) : ''
-      };
-    });
+  const isGenerated = !!content.specialistId;
+  
+  // Extract topics based on content type
+  let topics = [];
+  if (isGenerated) {
+    topics = [
+      content.topic,
+      ...(content.keywords || [])
+    ].filter(Boolean);
+  } else {
+    topics = content.topics || [];
+  }
+  
+  return {
+    id: index,
+    title: content.title || 'Health Article',
+    topic: topics[0] || 'health',
+    keywords: topics,
+    summary: content.content ? content.content.substring(0, 200) : ''
+  };
+});
 
     const prompt = `
 You are a medical content recommendation expert. Your task is to match health content to a user based on their conversation history.
@@ -252,16 +264,22 @@ const fallbackContentAnalysis = (userTopics, allContent) => {
 };
 
 /**
- * Format content for feed display (works for both GeneratedContent and HealthPost)
+ * Format content for feed display (handles both GeneratedContent and HealthPost)
  */
 const formatFeedContent = async (contents) => {
-  // Get all specialist IDs (only for GeneratedContent items)
-  const specialistIds = contents
-    .filter(content => content.specialistId) // Only items with specialistId
+  console.log(`🎨 Formatting ${contents.length} contents for feed`);
+
+  // First, separate content by type to handle them appropriately
+  const generatedItems = contents.filter(c => c.specialistId); // Has specialistId = GeneratedContent
+  const healthPostItems = contents.filter(c => !c.specialistId); // No specialistId = HealthPost
+  
+  console.log(`📊 Found ${generatedItems.length} GeneratedContent items, ${healthPostItems.length} HealthPost items`);
+
+  // Get specialist details for GeneratedContent items
+  const specialistIds = generatedItems
     .map(content => content.specialistId?._id || content.specialistId)
     .filter(id => id);
   
-  // Fetch specialist details
   const specialists = await Specialist.find({ _id: { $in: specialistIds } })
     .select('name specialty')
     .lean();
@@ -271,95 +289,96 @@ const formatFeedContent = async (contents) => {
     specialistMap[spec._id.toString()] = spec;
   });
 
-  return contents.map(content => {
-    // Determine if this is GeneratedContent or HealthPost
-    const isGenerated = !!content.specialistId;
+  // Process all contents
+  const formatted = [];
+
+  // 1. Process GeneratedContent items
+  for (const content of generatedItems) {
+    const specialist = content.specialistId?._id 
+      ? specialistMap[content.specialistId._id.toString()]
+      : specialistMap[content.specialistId?.toString()];
     
-    // Extract fields based on content type
-    const title = content.title || 'Untitled Health Article';
-    const contentText = content.content || '';
-    
-    // Handle date field (different names in each collection)
-    const publishDate = isGenerated ? content.generatedAt : content.publishDate;
-    
-    // Handle author field
-    let author = 'Healthcare Specialist';
-    let authorSpecialty = '';
-    
-    if (isGenerated) {
-      const specialist = content.specialistId?._id 
-        ? specialistMap[content.specialistId._id.toString()]
-        : specialistMap[content.specialistId?.toString()];
-      
-      author = specialist ? `Dr. ${specialist.name}` : (content.authorName || 'Healthcare Specialist');
-      authorSpecialty = specialist?.specialty || content.authorSpecialty || '';
-    } else {
-      author = content.author || 'MediGuide Health Team';
-    }
-    
-    // Calculate read time properly
-    const wordCount = contentText ? contentText.split(/\s+/).length : 0;
+    // Calculate read time
+    const wordCount = content.content ? content.content.split(/\s+/).length : 0;
     const readTimeMinutes = Math.max(1, Math.ceil(wordCount / 200));
     
     // Create excerpt
-    let excerpt = '';
-    if (content.excerpt && content.excerpt !== '...' && content.excerpt.length > 10) {
-      excerpt = content.excerpt;
-    } else if (contentText) {
-      // Clean markdown and trim
-      const plainText = contentText
+    let excerpt = content.excerpt || '';
+    if (!excerpt && content.content) {
+      const plainText = content.content
         .replace(/#{1,6}\s?/g, '')
         .replace(/\*\*(.*?)\*\*/g, '$1')
         .replace(/\*(.*?)\*/g, '$1')
         .replace(/\[.*?\]\(.*?\)/g, '')
         .trim();
       excerpt = plainText.substring(0, 150) + (plainText.length > 150 ? '...' : '');
-    } else {
-      excerpt = 'Click to read this informative health article';
     }
     
-    // Extract topics
-    let contentTopics = [];
-    if (isGenerated) {
-      if (content.topic) contentTopics.push(content.topic);
-      if (content.keywords && Array.isArray(content.keywords)) {
-        contentTopics.push(...content.keywords);
-      }
-      if (content.feedTopics && Array.isArray(content.feedTopics)) {
-        contentTopics.push(...content.feedTopics);
-      }
-    } else {
-      if (content.topics && Array.isArray(content.topics)) {
-        contentTopics = content.topics;
-      }
+    // Collect topics
+    const contentTopics = [];
+    if (content.topic) contentTopics.push(content.topic);
+    if (content.keywords && Array.isArray(content.keywords)) {
+      contentTopics.push(...content.keywords);
     }
     
-    // Ensure we have at least one topic
-    if (contentTopics.length === 0) {
-      contentTopics = ['health', 'wellness'];
-    }
-    
-    // Remove duplicates and limit
-    const uniqueTopics = [...new Set(contentTopics)].slice(0, 5);
-    
-    return {
+    formatted.push({
       _id: content._id,
-      title: title,
-      content: contentText,
-      excerpt: excerpt,
-      author: author,
-      authorType: isGenerated ? 'verified_specialist' : 'health_team',
-      authorSpecialty: authorSpecialty,
-      publishDate: publishDate || new Date(),
+      title: content.title || 'Health Article',
+      content: content.content || '',
+      excerpt: excerpt || 'Click to read this informative health article',
+      author: specialist ? `Dr. ${specialist.name}` : (content.authorName || 'Healthcare Specialist'),
+      authorType: 'verified_specialist',
+      authorSpecialty: specialist?.specialty || content.authorSpecialty || '',
+      publishDate: content.generatedAt || new Date(),
       readTime: `${readTimeMinutes} min read`,
-      topics: uniqueTopics,
+      topics: [...new Set(contentTopics)].slice(0, 5),
       relevanceScore: content.relevanceScore || 50,
       relevanceReason: content.relevanceReason || '',
       matchingTopics: content.matchingTopics || [],
-      isSpecialistContent: isGenerated,
-      source: isGenerated ? 'generated' : 'healthpost'
-    };
-  });
+      isSpecialistContent: true,
+      source: 'generated'
+    });
+  }
+
+  // 2. Process HealthPost items
+  for (const content of healthPostItems) {
+    // Calculate read time
+    const wordCount = content.content ? content.content.split(/\s+/).length : 0;
+    const readTimeMinutes = Math.max(1, Math.ceil(wordCount / 200));
+    
+    // Create excerpt
+    let excerpt = content.excerpt || '';
+    if (!excerpt && content.content) {
+      const plainText = content.content
+        .replace(/#{1,6}\s?/g, '')
+        .replace(/\*\*(.*?)\*\*/g, '$1')
+        .replace(/\*(.*?)\*/g, '$1')
+        .replace(/\[.*?\]\(.*?\)/g, '')
+        .trim();
+      excerpt = plainText.substring(0, 150) + (plainText.length > 150 ? '...' : '');
+    }
+    
+    formatted.push({
+      _id: content._id,
+      title: content.title || 'Health Article',
+      content: content.content || '',
+      excerpt: excerpt || 'Click to read this informative health article',
+      author: content.author || 'MediGuide Health Team',
+      authorType: 'health_team',
+      authorSpecialty: '',
+      publishDate: content.publishDate || new Date(),
+      readTime: `${readTimeMinutes} min read`,
+      topics: (content.topics && Array.isArray(content.topics)) ? content.topics.slice(0, 5) : ['health', 'wellness'],
+      relevanceScore: content.relevanceScore || 50,
+      relevanceReason: content.relevanceReason || '',
+      matchingTopics: content.matchingTopics || [],
+      isSpecialistContent: false,
+      source: 'healthpost'
+    });
+  }
+
+  // Shuffle to mix content types
+  return formatted.sort(() => Math.random() - 0.5);
 };
 
 
@@ -706,6 +725,7 @@ const findMatchingTopics = (content, userTopics) => {
   
   return matching;
 };
+
 
 
 
