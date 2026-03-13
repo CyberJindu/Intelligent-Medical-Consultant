@@ -5,7 +5,7 @@ const specialistSchema = new mongoose.Schema({
   email: {
     type: String,
     required: true,
-    unique: true,  // ← This creates an index automatically
+    unique: true,  
     trim: true,
     lowercase: true
   },
@@ -174,3 +174,4 @@ specialistSchema.set('toJSON', {
 });
 
 export default mongoose.model('Specialist', specialistSchema);
+
