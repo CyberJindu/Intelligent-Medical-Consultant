@@ -289,9 +289,12 @@ const generatedItems = contents.filter(c => {
 });
 
 const healthPostItems = contents.filter(c => {
-  // HealthPost has no specialistId
-  return c.specialistId === undefined || c.specialistId === null;
+  // Check if it has HealthPost specific fields (author, publishDate, no specialistId)
+  return (c.specialistId === undefined || c.specialistId === null) && 
+         (c.author !== undefined || c.publishDate !== undefined);
 });
+
+console.log(`📊 Filtered: ${generatedItems.length} Generated, ${healthPostItems.length} HealthPost`);
   
   console.log(`📊 Found ${generatedItems.length} GeneratedContent items, ${healthPostItems.length} HealthPost items`);
 
@@ -749,4 +752,5 @@ const findMatchingTopics = (content, userTopics) => {
   
   return matching;
 };
+
 
