@@ -1,5 +1,5 @@
 import GeneratedContent from '../models/GeneratedContent.js';
-import HealthPost from '../models/HealthPost.js';
+// import HealthPost from '../models/HealthPost.js'; // Commented out - no longer needed
 import User from '../models/User.js';
 import Specialist from '../models/Specialist.js';
 import model from '../config/gemini.js';
@@ -28,27 +28,19 @@ export const getPersonalizedFeed = async (req, res) => {
 
     console.log('🎯 User conversation topics:', recentConversations);
 
-    // FETCH FROM BOTH COLLECTIONS - NO FILTERS, GET EVERYTHING!
-    console.log('📡 Fetching ALL content from both collections...');
+    // FETCH ONLY FROM GENERATEDCONTENT
+    console.log('📡 Fetching content from GeneratedContent collection...');
     
-    // 1. Get ALL GeneratedContent (both published and drafts)
+    // Get ALL GeneratedContent (both published and drafts)
     const generatedContent = await GeneratedContent.find({})
       .populate('specialistId', 'name specialty')
       .sort({ generatedAt: -1 })
       .limit(50);
 
-    // 2. Get ALL HealthPost (both active and inactive)
-    const healthPosts = await HealthPost.find({})
-      .sort({ publishDate: -1 })
-      .limit(50);
-
     console.log(`📊 GeneratedContent: ${generatedContent.length} items total`);
-    console.log(`📊 HealthPost: ${healthPosts.length} items total`);
     
-    // Combine both collections
-    let allContent = [...generatedContent, ...healthPosts];
-    
-    console.log(`📊 TOTAL available content: ${allContent.length} items`);
+    // Use ONLY generatedContent, no HealthPost
+    let allContent = [...generatedContent];
     
     // Separate by publish status for debugging
     const publishedGen = generatedContent.filter(c => c.isPublished === true).length;
@@ -85,23 +77,23 @@ export const getPersonalizedFeed = async (req, res) => {
     const geminiAnalysis = await analyzeContentWithGemini(recentConversations, allContent);
 
     // DEBUG: Check what geminiAnalysis returned
-console.log(`📊 Gemini analysis returned ${geminiAnalysis.length} items`);
-if (geminiAnalysis.length > 0) {
-  console.log('🔍 First analysis item:', {
-    hasContent: !!geminiAnalysis[0].content,
-    contentId: geminiAnalysis[0].content?._id,
-    contentTitle: geminiAnalysis[0].content?.title
-  });
-}
+    console.log(`📊 Gemini analysis returned ${geminiAnalysis.length} items`);
+    if (geminiAnalysis.length > 0) {
+      console.log('🔍 First analysis item:', {
+        hasContent: !!geminiAnalysis[0].content,
+        contentId: geminiAnalysis[0].content?._id,
+        contentTitle: geminiAnalysis[0].content?.title
+      });
+    }
     
     // Sort by Gemini's relevance scores
-const scoredContent = geminiAnalysis.map(item => {
-  // Attach scores directly to the content object
-  item.content.relevanceScore = item.relevanceScore;
-  item.content.relevanceReason = item.reason;
-  item.content.matchingTopics = item.matchingTopics;
-  return item.content;
-});
+    const scoredContent = geminiAnalysis.map(item => {
+      // Attach scores directly to the content object
+      item.content.relevanceScore = item.relevanceScore;
+      item.content.relevanceReason = item.reason;
+      item.content.matchingTopics = item.matchingTopics;
+      return item.content;
+    });
 
     // Sort by score and take top 20
     const topContent = scoredContent
@@ -154,18 +146,13 @@ const analyzeContentWithGemini = async (userTopics, allContent) => {
   try {
     // Prepare content summaries for Gemini
     const contentSummaries = allContent.slice(0, 20).map((content, index) => {
-      const isGenerated = !!content.specialistId;
+      // For GeneratedContent only, isGenerated will always be true now
       
-      // Extract topics based on content type
-      let topics = [];
-      if (isGenerated) {
-        topics = [
-          content.topic,
-          ...(content.keywords || [])
-        ].filter(Boolean);
-      } else {
-        topics = content.topics || [];
-      }
+      // Extract topics
+      let topics = [
+        content.topic,
+        ...(content.keywords || [])
+      ].filter(Boolean);
       
       // If no topics found, use title words as fallback
       if (topics.length === 0 && content.title) {
@@ -217,51 +204,51 @@ Return ONLY the JSON array, no other text.
     const text = response.text();
 
     // Extract JSON array with better error handling
-let jsonText = text;
+    let jsonText = text;
 
-// Remove markdown code blocks if present
-jsonText = jsonText.replace(/```json\n?/g, '');
-jsonText = jsonText.replace(/```\n?/g, '');
-jsonText = jsonText.trim();
+    // Remove markdown code blocks if present
+    jsonText = jsonText.replace(/```json\n?/g, '');
+    jsonText = jsonText.replace(/```\n?/g, '');
+    jsonText = jsonText.trim();
 
-// Check if the response seems truncated
-if (!jsonText.endsWith(']')) {
-  console.log('⚠️ Gemini response appears truncated, using fallback');
-  return fallbackContentAnalysis(userTopics, allContent);
-}
-
-const jsonMatch = jsonText.match(/\[[\s\S]*\]/);
-if (jsonMatch) {
-  try {
-    const analysis = JSON.parse(jsonMatch[0]);
-    
-    // Validate each item has required fields
-    const validAnalysis = analysis.filter(item => 
-      item && 
-      typeof item.contentId === 'number' && 
-      typeof item.relevanceScore === 'number' &&
-      item.contentId >= 0 && 
-      item.contentId < allContent.length
-    );
-    
-    if (validAnalysis.length === 0) {
-      console.log('⚠️ No valid items in Gemini response, using fallback');
+    // Check if the response seems truncated
+    if (!jsonText.endsWith(']')) {
+      console.log('⚠️ Gemini response appears truncated, using fallback');
       return fallbackContentAnalysis(userTopics, allContent);
     }
-    
-    return validAnalysis.map(item => ({
-      content: allContent[item.contentId],
-      relevanceScore: Math.min(100, Math.max(0, item.relevanceScore)),
-      reason: item.reason || 'Matches your interests',
-      matchingTopics: item.matchingTopics || []
-    }));
-  } catch (parseError) {
-    console.error('❌ Failed to parse Gemini JSON:', parseError);
-    console.log('📝 Cleaned response length:', jsonText.length);
-    console.log('📝 First 500 chars:', jsonText.substring(0, 500));
-    return fallbackContentAnalysis(userTopics, allContent);
-  }
-}
+
+    const jsonMatch = jsonText.match(/\[[\s\S]*\]/);
+    if (jsonMatch) {
+      try {
+        const analysis = JSON.parse(jsonMatch[0]);
+        
+        // Validate each item has required fields
+        const validAnalysis = analysis.filter(item => 
+          item && 
+          typeof item.contentId === 'number' && 
+          typeof item.relevanceScore === 'number' &&
+          item.contentId >= 0 && 
+          item.contentId < allContent.length
+        );
+        
+        if (validAnalysis.length === 0) {
+          console.log('⚠️ No valid items in Gemini response, using fallback');
+          return fallbackContentAnalysis(userTopics, allContent);
+        }
+        
+        return validAnalysis.map(item => ({
+          content: allContent[item.contentId],
+          relevanceScore: Math.min(100, Math.max(0, item.relevanceScore)),
+          reason: item.reason || 'Matches your interests',
+          matchingTopics: item.matchingTopics || []
+        }));
+      } catch (parseError) {
+        console.error('❌ Failed to parse Gemini JSON:', parseError);
+        console.log('📝 Cleaned response length:', jsonText.length);
+        console.log('📝 First 500 chars:', jsonText.substring(0, 500));
+        return fallbackContentAnalysis(userTopics, allContent);
+      }
+    }
 
     return fallbackContentAnalysis(userTopics, allContent);
 
@@ -297,7 +284,6 @@ const fallbackContentAnalysis = (userTopics, allContent) => {
     // Add content-specific topics
     if (content.topic) contentTopics.push(content.topic.toLowerCase());
     if (content.keywords) contentTopics.push(...content.keywords.map(k => k.toLowerCase()));
-    if (content.topics) contentTopics.push(...content.topics.map(t => t.toLowerCase()));
     
     // Count semantic matches
     const matches = [];
@@ -314,7 +300,7 @@ const fallbackContentAnalysis = (userTopics, allContent) => {
     score += uniqueMatches.length * 15;
     
     // Recency bonus
-    const publishDate = content.generatedAt || content.publishDate || new Date();
+    const publishDate = content.generatedAt || new Date();
     const daysOld = (Date.now() - new Date(publishDate)) / (1000 * 60 * 60 * 24);
     if (daysOld < 7) score += 25;
     else if (daysOld < 30) score += 15;
@@ -332,39 +318,24 @@ const fallbackContentAnalysis = (userTopics, allContent) => {
 };
 
 /**
- * Format content for feed display (handles both GeneratedContent and HealthPost)
+ * Format content for feed display (handles GeneratedContent only)
  */
 const formatFeedContent = async (contents) => {
   console.log(`🎨 Formatting ${contents.length} contents for feed`);
 
-  // First, separate content by type to handle them appropriately
+  // All items should be GeneratedContent now
   const generatedItems = contents.filter(c => {
-    // GeneratedContent has specialistId (either as object or string)
     return c.specialistId !== undefined && c.specialistId !== null;
   });
 
-  const healthPostItems = contents.filter(c => {
-    // Check if it has HealthPost specific fields (author, publishDate, no specialistId)
-    return (c.specialistId === undefined || c.specialistId === null) && 
-           (c.author !== undefined || c.publishDate !== undefined);
-  });
+  console.log(`📊 Filtered: ${generatedItems.length} Generated items`);
 
-  console.log(`📊 Filtered: ${generatedItems.length} Generated, ${healthPostItems.length} HealthPost`);
-
-  // Debug first item of each type
+  // Debug first item
   if (generatedItems.length > 0) {
     console.log('🔍 Sample GeneratedContent:', {
       id: generatedItems[0]._id,
       title: generatedItems[0].title,
       hasSpecialistId: !!generatedItems[0].specialistId
-    });
-  }
-
-  if (healthPostItems.length > 0) {
-    console.log('🔍 Sample HealthPost:', {
-      id: healthPostItems[0]._id,
-      title: healthPostItems[0].title,
-      author: healthPostItems[0].author
     });
   }
 
@@ -385,7 +356,7 @@ const formatFeedContent = async (contents) => {
   // Process all contents
   const formatted = [];
 
-  // 1. Process GeneratedContent items
+  // Process GeneratedContent items
   for (const content of generatedItems) {
     const specialist = content.specialistId?._id 
       ? specialistMap[content.specialistId._id.toString()]
@@ -434,43 +405,6 @@ const formatFeedContent = async (contents) => {
       isSpecialistContent: true,
       source: 'generated',
       isPublished: content.isPublished
-    });
-  }
-
-  // 2. Process HealthPost items
-  for (const content of healthPostItems) {
-    // Calculate read time
-    const wordCount = content.content ? content.content.split(/\s+/).length : 0;
-    const readTimeMinutes = Math.max(1, Math.ceil(wordCount / 200));
-    
-    // Create excerpt
-    let excerpt = content.excerpt || '';
-    if (!excerpt && content.content) {
-      const plainText = content.content
-        .replace(/#{1,6}\s?/g, '')
-        .replace(/\*\*(.*?)\*\*/g, '$1')
-        .replace(/\*(.*?)\*/g, '$1')
-        .replace(/\[.*?\]\(.*?\)/g, '')
-        .trim();
-      excerpt = plainText.substring(0, 150) + (plainText.length > 150 ? '...' : '');
-    }
-    
-    formatted.push({
-      _id: content._id,
-      title: content.title || 'Health Article',
-      content: content.content || '',
-      excerpt: excerpt || content.content?.substring(0, 150) + '...' || 'Click to read',
-      author: content.author || 'MediGuide Health Team',
-      authorType: 'health_team',
-      authorSpecialty: '',
-      publishDate: content.publishDate || new Date(),
-      readTime: content.readTime || `${readTimeMinutes} min read`,
-      topics: (content.topics && Array.isArray(content.topics)) ? content.topics.slice(0, 5) : ['health', 'wellness'],
-      relevanceScore: content.relevanceScore || 50,
-      relevanceReason: content.relevanceReason || '',
-      matchingTopics: content.matchingTopics || [],
-      isSpecialistContent: false,
-      source: 'healthpost'
     });
   }
 
@@ -784,7 +718,7 @@ const calculateRelevanceScore = (content, userTopics) => {
   
   score += Math.min(matchingTopics.length * 15, 60);
   
-  const daysOld = (new Date() - (content.generatedAt || content.publishDate || new Date())) / (1000 * 60 * 60 * 24);
+  const daysOld = (new Date() - (content.generatedAt || new Date())) / (1000 * 60 * 60 * 24);
   score += Math.max(0, 40 - (daysOld * 1.5));
   
   return Math.round(Math.min(score, 100));
@@ -822,10 +756,3 @@ const findMatchingTopics = (content, userTopics) => {
   
   return matching;
 };
-
-
-
-
-
-
-
