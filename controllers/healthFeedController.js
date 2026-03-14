@@ -210,26 +210,33 @@ Return ONLY the JSON array, no other text.
     const text = response.text();
 
     // Extract JSON array with better error handling
-    const jsonMatch = text.match(/\[[\s\S]*\]/);
-    if (jsonMatch) {
-      try {
-        const analysis = JSON.parse(jsonMatch[0]);
-        
-        // Validate and clean the analysis
-        return analysis
-          .filter(item => item && typeof item.relevanceScore === 'number')
-          .map(item => ({
-            content: allContent[item.contentId],
-            relevanceScore: Math.min(100, Math.max(0, item.relevanceScore)),
-            reason: item.reason || 'Matches your interests',
-            matchingTopics: item.matchingTopics || []
-          }));
-      } catch (parseError) {
-        console.error('❌ Failed to parse Gemini JSON:', parseError);
-        console.log('📝 Raw response:', text.substring(0, 300));
-        return fallbackContentAnalysis(userTopics, allContent);
-      }
-    }
+    let jsonText = text;
+
+    // Remove markdown code blocks if present
+jsonText = jsonText.replace(/```json\n?/g, '');
+jsonText = jsonText.replace(/```\n?/g, '');
+jsonText = jsonText.trim();
+
+const jsonMatch = jsonText.match(/\[[\s\S]*\]/);
+if (jsonMatch) {
+  try {
+    const analysis = JSON.parse(jsonMatch[0]);
+    
+    // Validate and clean the analysis
+    return analysis
+      .filter(item => item && typeof item.relevanceScore === 'number')
+      .map(item => ({
+        content: allContent[item.contentId],
+        relevanceScore: Math.min(100, Math.max(0, item.relevanceScore)),
+        reason: item.reason || 'Matches your interests',
+        matchingTopics: item.matchingTopics || []
+      }));
+  } catch (parseError) {
+    console.error('❌ Failed to parse Gemini JSON:', parseError);
+    console.log('📝 Cleaned response:', jsonText.substring(0, 300));
+    return fallbackContentAnalysis(userTopics, allContent);
+  }
+}
 
     return fallbackContentAnalysis(userTopics, allContent);
 
@@ -790,5 +797,6 @@ const findMatchingTopics = (content, userTopics) => {
   
   return matching;
 };
+
 
 
