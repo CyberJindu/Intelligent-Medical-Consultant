@@ -210,30 +210,48 @@ Return ONLY the JSON array, no other text.
     const text = response.text();
 
     // Extract JSON array with better error handling
-    let jsonText = text;
+let jsonText = text;
 
-    // Remove markdown code blocks if present
+// Remove markdown code blocks if present
 jsonText = jsonText.replace(/```json\n?/g, '');
 jsonText = jsonText.replace(/```\n?/g, '');
 jsonText = jsonText.trim();
+
+// Check if the response seems truncated
+if (!jsonText.endsWith(']')) {
+  console.log('⚠️ Gemini response appears truncated, using fallback');
+  return fallbackContentAnalysis(userTopics, allContent);
+}
 
 const jsonMatch = jsonText.match(/\[[\s\S]*\]/);
 if (jsonMatch) {
   try {
     const analysis = JSON.parse(jsonMatch[0]);
     
-    // Validate and clean the analysis
-    return analysis
-      .filter(item => item && typeof item.relevanceScore === 'number')
-      .map(item => ({
-        content: allContent[item.contentId],
-        relevanceScore: Math.min(100, Math.max(0, item.relevanceScore)),
-        reason: item.reason || 'Matches your interests',
-        matchingTopics: item.matchingTopics || []
-      }));
+    // Validate each item has required fields
+    const validAnalysis = analysis.filter(item => 
+      item && 
+      typeof item.contentId === 'number' && 
+      typeof item.relevanceScore === 'number' &&
+      item.contentId >= 0 && 
+      item.contentId < allContent.length
+    );
+    
+    if (validAnalysis.length === 0) {
+      console.log('⚠️ No valid items in Gemini response, using fallback');
+      return fallbackContentAnalysis(userTopics, allContent);
+    }
+    
+    return validAnalysis.map(item => ({
+      content: allContent[item.contentId],
+      relevanceScore: Math.min(100, Math.max(0, item.relevanceScore)),
+      reason: item.reason || 'Matches your interests',
+      matchingTopics: item.matchingTopics || []
+    }));
   } catch (parseError) {
     console.error('❌ Failed to parse Gemini JSON:', parseError);
-    console.log('📝 Cleaned response:', jsonText.substring(0, 300));
+    console.log('📝 Cleaned response length:', jsonText.length);
+    console.log('📝 First 500 chars:', jsonText.substring(0, 500));
     return fallbackContentAnalysis(userTopics, allContent);
   }
 }
@@ -797,6 +815,7 @@ const findMatchingTopics = (content, userTopics) => {
   
   return matching;
 };
+
 
 
 
