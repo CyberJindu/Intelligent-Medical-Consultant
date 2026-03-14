@@ -18,10 +18,10 @@ const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
 
 // Configure the model with medical-specific safety settings
 const generationConfig = {
-  temperature: 0.7,
+  temperature: 0.2,
   topP: 0.8,
   topK: 40,
-  maxOutputTokens: 4096,
+  maxOutputTokens: 8192,
 };
 
 // Safety settings for medical content
@@ -137,4 +137,5 @@ CRITICAL: Always maintain a professional, empathetic tone and focus on guiding u
 `;
 
 export default model;
+
 
