@@ -21,7 +21,7 @@ const generationConfig = {
   temperature: 0.2,
   topP: 0.8,
   topK: 40,
-  maxOutputTokens: 8192,
+  maxOutputTokens: 65536,
 };
 
 // Safety settings for medical content
@@ -137,5 +137,6 @@ CRITICAL: Always maintain a professional, empathetic tone and focus on guiding u
 `;
 
 export default model;
+
 
 
