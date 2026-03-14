@@ -196,6 +196,13 @@ Analyze each piece of content and determine how relevant it is to the user's con
 - User's likely interests
 - Educational value
 
+CRITICAL RESPONSE LENGTH REQUIREMENTS:
+- Keep your response UNDER 4000 tokens
+- For each content item, use at most:
+  - 10 words for the reason
+  - 3 topics in matchingTopics
+- Be extremely concise
+
 Return a JSON array with objects containing:
 - contentId: number (the id field from above)
 - relevanceScore: number (0-100)
@@ -815,6 +822,7 @@ const findMatchingTopics = (content, userTopics) => {
   
   return matching;
 };
+
 
 
 
