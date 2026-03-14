@@ -153,7 +153,7 @@ const scoredContent = geminiAnalysis.map(item => {
 const analyzeContentWithGemini = async (userTopics, allContent) => {
   try {
     // Prepare content summaries for Gemini
-    const contentSummaries = allContent.slice(0, 40).map((content, index) => {
+    const contentSummaries = allContent.slice(0, 20).map((content, index) => {
       const isGenerated = !!content.specialistId;
       
       // Extract topics based on content type
@@ -815,6 +815,7 @@ const findMatchingTopics = (content, userTopics) => {
   
   return matching;
 };
+
 
 
 
