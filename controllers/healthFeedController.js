@@ -528,6 +528,26 @@ export const trackView = async (req, res) => {
       });
     }
 
+    // Check if user has already viewed this article
+    if (userId) {
+      // Check if user ID exists in uniqueViewers array
+      const hasViewed = article.uniqueViewers && 
+                        article.uniqueViewers.some(id => id.toString() === userId.toString());
+      
+      if (hasViewed) {
+        console.log(`👁️ User ${userId} already viewed article ${articleId}, skipping duplicate count`);
+        return res.status(200).json({
+          success: true,
+          message: 'Already viewed',
+          data: {
+            views: article.views,
+            alreadyViewed: true
+          }
+        });
+      }
+    }
+
+    // Increment view and add user to uniqueViewers
     await article.incrementView(userId);
 
     res.status(200).json({
@@ -756,3 +776,4 @@ const findMatchingTopics = (content, userTopics) => {
   
   return matching;
 };
+
