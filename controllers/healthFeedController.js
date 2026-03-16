@@ -339,13 +339,13 @@ const formatFeedContent = async (contents) => {
     });
   }
 
-  // Get specialist details for GeneratedContent items
+  // Get specialist details for GeneratedContent items - INCLUDING PROFILE PICTURE
   const specialistIds = generatedItems
     .map(content => content.specialistId?._id || content.specialistId)
     .filter(id => id);
   
   const specialists = await Specialist.find({ _id: { $in: specialistIds } })
-    .select('name specialty')
+    .select('name specialty profileImage') // ADDED profileImage here
     .lean();
   
   const specialistMap = {};
@@ -378,7 +378,7 @@ const formatFeedContent = async (contents) => {
       excerpt = plainText.substring(0, 150) + (plainText.length > 150 ? '...' : '');
     }
     
-    // Collect topics
+    // Collect topics (still needed for algorithm but not displayed)
     const contentTopics = [];
     if (content.topic) contentTopics.push(content.topic);
     if (content.keywords && Array.isArray(content.keywords)) {
@@ -396,9 +396,10 @@ const formatFeedContent = async (contents) => {
       author: specialist ? `Dr. ${specialist.name}` : (content.authorName || 'Healthcare Specialist'),
       authorType: 'verified_specialist',
       authorSpecialty: specialist?.specialty || content.authorSpecialty || '',
+      authorProfilePic: specialist?.profileImage || null, // ADDED profile picture
       publishDate: content.generatedAt || new Date(),
       readTime: content.readTime || `${readTimeMinutes} min read`,
-      topics: [...new Set(contentTopics)].slice(0, 5),
+      topics: [...new Set(contentTopics)].slice(0, 5), // Keep for algorithm
       relevanceScore: content.relevanceScore || 50,
       relevanceReason: content.relevanceReason || '',
       matchingTopics: content.matchingTopics || [],
@@ -776,4 +777,5 @@ const findMatchingTopics = (content, userTopics) => {
   
   return matching;
 };
+
 
