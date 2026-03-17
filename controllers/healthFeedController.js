@@ -108,7 +108,7 @@ export const getPersonalizedFeed = async (req, res) => {
     } : 'No content');
 
     // Format for feed display
-    const formattedFeed = await formatFeedContent(topContent);
+    const formattedFeed = await formatFeedContent(topContent, userId);
 
     res.status(200).json({
       success: true,
@@ -320,7 +320,7 @@ const fallbackContentAnalysis = (userTopics, allContent) => {
 /**
  * Format content for feed display (handles GeneratedContent only)
  */
-const formatFeedContent = async (contents) => {
+const formatFeedContent = async (contents, userId) => {
   console.log(`🎨 Formatting ${contents.length} contents for feed`);
 
   // All items should be GeneratedContent now
@@ -329,6 +329,12 @@ const formatFeedContent = async (contents) => {
   });
 
   console.log(`📊 Filtered: ${generatedItems.length} Generated items`);
+
+  let userLikedArticles = [];
+  if (userId) {
+    const user = await User.findById(userId).select('likedArticles');
+    userLikedArticles = user?.likedArticles?.map(liked => liked.articleId.toString()) || [];
+  }
 
   // Debug first item
   if (generatedItems.length > 0) {
@@ -398,6 +404,7 @@ const formatFeedContent = async (contents) => {
       authorSpecialty: specialist?.specialty || content.authorSpecialty || '',
       authorProfilePic: specialist?.profilePicture || null, 
       publishDate: content.generatedAt || new Date(),
+      likedByUser: userLikedArticles.includes(content._id.toString()),
       readTime: content.readTime || `${readTimeMinutes} min read`,
       topics: [...new Set(contentTopics)].slice(0, 5), 
       relevanceScore: content.relevanceScore || 50,
@@ -569,7 +576,7 @@ export const trackView = async (req, res) => {
   }
 };
 
-// Save article for later
+// Save/Like article
 export const saveArticle = async (req, res) => {
   try {
     const { articleId } = req.params;
@@ -584,27 +591,70 @@ export const saveArticle = async (req, res) => {
       });
     }
 
-    article.saveCount = (article.saveCount || 0) + 1;
-    await article.save();
-
     const user = await User.findById(userId);
-    if (user && article.topic) {
-      const newTopics = [{
-        topic: article.topic.toLowerCase(),
-        category: 'wellness',
-        severity: 'informational'
-      }];
-      
-      await user.updateConversationTopics(newTopics, `Saved article: ${article.title}`);
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
     }
 
-    res.status(200).json({
-      success: true,
-      message: 'Article saved successfully',
-      data: {
-        saveCount: article.saveCount
+    // Check if user already liked this article
+    const alreadyLiked = user.likedArticles?.some(
+      liked => liked.articleId.toString() === articleId
+    );
+
+    if (alreadyLiked) {
+      // Unlike: remove from user's liked articles and decrement count
+      user.likedArticles = user.likedArticles.filter(
+        liked => liked.articleId.toString() !== articleId
+      );
+      article.saveCount = Math.max(0, (article.saveCount || 0) - 1);
+      
+      await user.save();
+      await article.save();
+      
+      return res.status(200).json({
+        success: true,
+        message: 'Article unliked successfully',
+        data: {
+          saveCount: article.saveCount,
+          liked: false
+        }
+      });
+    } else {
+      // Like: add to user's liked articles and increment count
+      user.likedArticles = user.likedArticles || [];
+      user.likedArticles.push({
+        articleId: articleId,
+        likedAt: new Date()
+      });
+      
+      article.saveCount = (article.saveCount || 0) + 1;
+      
+      // Update conversation topics if article has topic
+      if (article.topic) {
+        const newTopics = [{
+          topic: article.topic.toLowerCase(),
+          category: 'wellness',
+          severity: 'informational'
+        }];
+        
+        await user.updateConversationTopics(newTopics, `Liked article: ${article.title}`);
       }
-    });
+      
+      await user.save();
+      await article.save();
+      
+      return res.status(200).json({
+        success: true,
+        message: 'Article liked successfully',
+        data: {
+          saveCount: article.saveCount,
+          liked: true
+        }
+      });
+    }
 
   } catch (error) {
     console.error('Save article error:', error);
@@ -777,6 +827,7 @@ const findMatchingTopics = (content, userTopics) => {
   
   return matching;
 };
+
 
 
 
