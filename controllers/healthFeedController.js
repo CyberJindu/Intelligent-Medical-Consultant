@@ -452,6 +452,15 @@ export const getFeedByTopics = async (req, res) => {
     .sort({ generatedAt: -1 })
     .limit(20);
 
+    // Get user's liked articles
+    let userLikedArticles = []
+      if (userId) {
+        const userData = await User.findById(userId).select('likedArticles');
+        if (userData && userData.likedArticles) {
+          userLikedArticles = userData.likedArticles.map(liked => liked.articleId.toString());
+        }
+      }
+
     // Get specialist names
     const specialistIds = [...new Set(feed.map(content => content.specialistId))];
     const specialists = await Specialist.find({ _id: { $in: specialistIds } })
@@ -477,6 +486,9 @@ export const getFeedByTopics = async (req, res) => {
         });
       }
       
+      // Check if user liked this article
+      const likedByUser = userId ? userLikedArticles?.includes(content._id.toString()) : false;
+      
       return {
         _id: content._id,
         title: content.title,
@@ -490,6 +502,8 @@ export const getFeedByTopics = async (req, res) => {
         specialistSpecialty: specialist?.specialty || content.authorSpecialty || '',
         isSpecialistContent: true,
         relevanceScore,
+        saveCount: content.saveCount || 0, 
+        likedByUser: likedByUser, 
         matchingTopics: topicArray.filter(topic => 
           content.topic?.toLowerCase().includes(topic.toLowerCase()) || 
           content.keywords?.some(k => k.toLowerCase().includes(topic.toLowerCase())) ||
@@ -826,6 +840,7 @@ const findMatchingTopics = (content, userTopics) => {
   
   return matching;
 };
+
 
 
 
