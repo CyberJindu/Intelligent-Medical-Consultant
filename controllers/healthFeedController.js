@@ -33,7 +33,7 @@ export const getPersonalizedFeed = async (req, res) => {
     
     // Get ALL GeneratedContent (both published and drafts)
     const generatedContent = await GeneratedContent.find({})
-      .populate('specialistId', 'name specialty')
+      .populate('specialistId', 'name specialty profilePicture')
       .sort({ generatedAt: -1 })
       .limit(50);
 
@@ -345,7 +345,7 @@ const formatFeedContent = async (contents) => {
     .filter(id => id);
   
   const specialists = await Specialist.find({ _id: { $in: specialistIds } })
-    .select('name specialty profileImage') // ADDED profileImage here
+    .select('name specialty profilePicture') 
     .lean();
   
   const specialistMap = {};
@@ -396,10 +396,10 @@ const formatFeedContent = async (contents) => {
       author: specialist ? `Dr. ${specialist.name}` : (content.authorName || 'Healthcare Specialist'),
       authorType: 'verified_specialist',
       authorSpecialty: specialist?.specialty || content.authorSpecialty || '',
-      authorProfilePic: specialist?.profileImage || null, // ADDED profile picture
+      authorProfilePic: specialist?.profilePicture || null, 
       publishDate: content.generatedAt || new Date(),
       readTime: content.readTime || `${readTimeMinutes} min read`,
-      topics: [...new Set(contentTopics)].slice(0, 5), // Keep for algorithm
+      topics: [...new Set(contentTopics)].slice(0, 5), 
       relevanceScore: content.relevanceScore || 50,
       relevanceReason: content.relevanceReason || '',
       matchingTopics: content.matchingTopics || [],
@@ -777,5 +777,6 @@ const findMatchingTopics = (content, userTopics) => {
   
   return matching;
 };
+
 
 
