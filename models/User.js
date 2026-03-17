@@ -42,6 +42,17 @@ const userSchema = new mongoose.Schema({
     type: String,
     trim: true
   }],
+
+  likedArticles: [{
+  articleId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'GeneratedContent'
+  },
+  likedAt: {
+    type: Date,
+    default: Date.now
+  }
+}],
   
   // Conversation Topics Storage
   conversationTopics: [{
@@ -239,4 +250,5 @@ userSchema.set('toJSON', {
 });
 
 export default mongoose.model('User', userSchema);
+
 
