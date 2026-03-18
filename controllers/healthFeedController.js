@@ -59,7 +59,7 @@ export const getPersonalizedFeed = async (req, res) => {
 
     // If user has no conversation history, show most recent content
     if (recentConversations.length === 0) {
-      const formattedFeed = await formatFeedContent(allContent.slice(0, 50));
+      const formattedFeed = await formatFeedContent(allContent.slice(0, 50), userId);
       
       return res.status(200).json({
         success: true,
@@ -841,6 +841,7 @@ const findMatchingTopics = (content, userTopics) => {
   
   return matching;
 };
+
 
 
 
