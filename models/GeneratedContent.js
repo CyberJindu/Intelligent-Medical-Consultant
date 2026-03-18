@@ -200,13 +200,13 @@ generatedContentSchema.methods.incrementLike = function() {
 };
 
 // Transform output
-//generatedContentSchema.set('toJSON', {
-  //virtuals: true,
-  //transform: function(doc, ret) {
-    //delete ret.__v;
-    //delete ret.uniqueViewers;
-    //return ret;
-  //}
-//});
+generatedContentSchema.set('toJSON', {
+  virtuals: true,
+  transform: function(doc, ret) {
+    delete ret.__v;
+    delete ret.uniqueViewers;
+    return ret;
+  }
+});
 
 export default mongoose.model('GeneratedContent', generatedContentSchema);
