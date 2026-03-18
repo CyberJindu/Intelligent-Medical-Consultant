@@ -404,6 +404,7 @@ const formatFeedContent = async (contents, userId) => {
       authorProfilePic: specialist?.profilePicture || null, 
       publishDate: content.generatedAt || new Date(),
       likedByUser: userLikedArticles.includes(content._id.toString()),
+      saveCount: content.saveCount || 0,
       readTime: content.readTime || `${readTimeMinutes} min read`,
       topics: [...new Set(contentTopics)].slice(0, 5), 
       relevanceScore: content.relevanceScore || 50,
@@ -840,6 +841,7 @@ const findMatchingTopics = (content, userTopics) => {
   
   return matching;
 };
+
 
 
 
