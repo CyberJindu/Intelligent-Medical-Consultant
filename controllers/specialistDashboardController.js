@@ -21,12 +21,11 @@ export const getPerformanceStats = async (req, res) => {
       });
     }
 
-    // Get content statistics
+    // Get content statistics (total content, last 30 days, avg word count)
     const contentStats = await GeneratedContent.aggregate([
       {
         $match: {
           specialistId: new mongoose.Types.ObjectId(specialistId),
-          //isPublished: true
         }
       },
       {
@@ -43,23 +42,42 @@ export const getPerformanceStats = async (req, res) => {
       }
     ]);
 
-// Calculate engagement metrics
-const engagementStats = await GeneratedContent.aggregate([
-  {
-    $match: {
-      specialistId: new mongoose.Types.ObjectId(specialistId),
+    // Get total views (sum of all views)
+    const viewsStats = await GeneratedContent.aggregate([
+      {
+        $match: {
+          specialistId: new mongoose.Types.ObjectId(specialistId),
+          isPublished: true
+        }
+      },
+      {
+        $group: {
+          _id: null,
+          totalViews: { $sum: "$views" },
+          totalLikes: { $sum: "$likes" },
+          totalShares: { $sum: "$shares" }
+        }
+      }
+    ]);
+
+    // Get UNIQUE PATIENTS REACHED (unique viewers across all content)
+    // First, get all uniqueViewers arrays and combine them
+    const allContent = await GeneratedContent.find({
+      specialistId: specialistId,
       isPublished: true
-    }
-  },
-  {
-    $group: {
-      _id: null,
-      totalViews: { $sum: "$views" },  
-      totalLikes: { $sum: "$likes" },  
-      totalShares: { $sum: "$shares" }  
-    }
-  }
-]);
+    }).select('uniqueViewers');
+
+    // Collect all unique user IDs across all content
+    const uniqueViewerIds = new Set();
+    allContent.forEach(content => {
+      if (content.uniqueViewers && Array.isArray(content.uniqueViewers)) {
+        content.uniqueViewers.forEach(viewerId => {
+          uniqueViewerIds.add(viewerId.toString());
+        });
+      }
+    });
+
+    const uniquePatientsReached = uniqueViewerIds.size;
 
     const stats = contentStats[0] || {
       totalContent: 0,
@@ -67,15 +85,15 @@ const engagementStats = await GeneratedContent.aggregate([
       avgWordCount: 0
     };
 
-    const engagement = engagementStats[0] || {
+    const views = viewsStats[0] || {
       totalViews: 0,
       totalLikes: 0,
       totalShares: 0
     };
 
-    // Calculate engagement rate (if we have views)
-    const engagementRate = engagement.totalViews > 0 
-      ? ((engagement.totalLikes + engagement.totalShares) / engagement.totalViews * 100).toFixed(1)
+    // Calculate engagement rate based on total views
+    const engagementRate = views.totalViews > 0 
+      ? ((views.totalLikes + views.totalShares) / views.totalViews * 100).toFixed(1)
       : 0;
 
     res.status(200).json({
@@ -89,9 +107,9 @@ const engagementStats = await GeneratedContent.aggregate([
           verificationStatus: specialist.verificationStatus
         },
         metrics: {
-          // Core metrics requested
-          patientsReached: engagement.totalViews, // Using views as proxy for now
-          contentViews: engagement.totalViews,
+          // Core metrics - NOW CORRECTLY SEPARATED
+          patientsReached: uniquePatientsReached,  // ← Unique users who viewed any content
+          contentViews: views.totalViews,          // ← Total views across all content
           engagementRate: `${engagementRate}%`,
           contentCreated: stats.totalContent,
           
